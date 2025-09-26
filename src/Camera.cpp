@@ -215,8 +215,14 @@ ChessboardData::ChessboardData(const std::filesystem::path & configPath)
                             int nFrames = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_COUNT));
                             std::println(" done, found {} frames", nFrames);
 
+                            // Select frames to process (every 30th frame, max 30 images)
+                            int frameInterval = 10;
+                            int maxImages = 30;
+                            int imagesFound = 0;
+                            
+
                             // Loop through selected frames
-                            for (int idxFrame = 0; idxFrame < nFrames; /*TODO: Merge from Lab 3*/)
+                            for (int idxFrame = 0; idxFrame < nFrames && imagesFound < maxImages; idxFrame += frameInterval)
                             {
                                 // Read frame
                                 std::print("Reading {} frame {}...", p.path().filename().string(), idxFrame);
@@ -239,6 +245,7 @@ ChessboardData::ChessboardData(const std::filesystem::path & configPath)
                                 if (ci.isFound)
                                 {
                                     chessboardImages.push_back(ci);
+                                    imagesFound++;
                                 }
                             }
                         }
@@ -311,10 +318,11 @@ void Camera::calibrate(ChessboardData & chessboardData)
     assert(chessboardData.chessboardImages.size() == Thetacn_all.size());
     for (std::size_t k = 0; k < chessboardData.chessboardImages.size(); ++k)
     {
-        Pose<double> Tnc = chessboardData.chessboardImages[k].Tnc;
+        // Set the camera orientation and position (extrinsic camera parameters)
+        Pose<double> & Tnc = chessboardData.chessboardImages[k].Tnc;
         
         // Convert from camera coordinates to world coordinates
-        Pose Tcn(Thetacn_all[k], rNCc_all[k]);
+        Pose<double> Tcn(Thetacn_all[k], rNCc_all[k]);
         Tnc = Tcn.inverse();
     }
     
@@ -376,7 +384,7 @@ void Camera::calcFieldOfView()
 cv::Vec3d Camera::worldToVector(const cv::Vec3d & rPNn, const Pose<double> & Tnb) const
 {
     // Camera pose Tnc (i.e., Rnc, rCNn)
-    Pose Tnc = bodyToCamera(Tnb); // Tnb*Tbc
+    Pose<double> Tnc = bodyToCamera(Tnb); // Tnb*Tbc
 
     // Compute the unit vector uPCc from the world position rPNn and camera pose Tnc
     cv::Vec3d rPCc = Tnc.inverse() * rPNn;  // Transform to camera coordinates
