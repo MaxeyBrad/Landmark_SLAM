@@ -1,0 +1,9 @@
+# Keep only src and test directories
+*
+!src/
+!src/**
+!test/
+!test/**
+!CMakeLists.txt
+!.gitignore
+!README.md
