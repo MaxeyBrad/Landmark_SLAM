@@ -207,17 +207,18 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
             std::cout << "Using manual split-screen: " << combinedFrame.cols << "x" << combinedFrame.rows << std::endl;
         }
         
-        cv::namedWindow("Visual Navigation", cv::WINDOW_NORMAL);
-        cv::resizeWindow("Visual Navigation", 1200, 400); // Adjust size as needed
-        cv::imshow("Visual Navigation", combinedFrame);
-
-        // Display in real-time based on interactive mode
-        if (interactive == 2) {
+        // The VTK Plot system handles display, so we only need OpenCV window as a fallback
+        if (imgout.empty()) {
+            // Only show OpenCV window if Plot system fails
+            cv::namedWindow("Visual Navigation", cv::WINDOW_NORMAL);
+            cv::resizeWindow("Visual Navigation", 1200, 400);
             cv::imshow("Visual Navigation", combinedFrame);
-            cv::waitKey(0); // Wait for key press each frame
-        } else if (interactive == 0 && !doExport) {
-            cv::imshow("Visual Navigation", combinedFrame);
-            cv::waitKey(1); // Non-blocking display
+            
+            if (interactive == 2) {
+                cv::waitKey(0); // Wait for key press each frame
+            } else {
+                cv::waitKey(1); // Non-blocking display
+            }
         }
 
         // Write output frame
