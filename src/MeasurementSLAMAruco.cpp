@@ -297,10 +297,23 @@ double MeasurementSLAMAruco::logLikelihood(const Eigen::VectorXd & x, const Syst
 
 double MeasurementSLAMAruco::logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system, Eigen::VectorXd & g) const
 {
-    // TODO: Implement log-likelihood with gradient
-    std::cout << "TODO: Implement ArUco log-likelihood with gradient" << std::endl;
-    g = Eigen::VectorXd::Zero(x.size());
-    return 0.0;
+    // Use autodiff to compute gradient
+    using namespace autodiff;
+    
+    // Convert x to dual numbers
+    Eigen::VectorX<dual> xdual = x.cast<dual>();
+    
+    // Create lambda that calls the logLikelihood function
+    auto func = [&](const Eigen::VectorX<dual>& xd) {
+        // We need a templated version of logLikelihood
+        return logLikelihoodTemplate(xd, system);
+    };
+    
+    // Compute value and gradient using autodiff
+    dual loglik_dual;
+    g = gradient(func, wrt(xdual), at(xdual), loglik_dual);
+    
+    return val(loglik_dual);
 }
 
 double MeasurementSLAMAruco::logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system, Eigen::VectorXd & g, Eigen::MatrixXd & H) const
@@ -373,9 +386,31 @@ Eigen::Matrix<double, 8, 1> MeasurementSLAMAruco::predictArucoCorners(const Eige
 
 void MeasurementSLAMAruco::update(SystemBase & system)
 {
-    // TODO: Implement measurement update
-    // This is where the actual SLAM update happens
-    std::cout << "TODO: Implement ArUco measurement update" << std::endl;
+    SystemSLAM & systemSLAM = dynamic_cast<SystemSLAM &>(system);
+    
+    // Get visible landmarks for data association
+    std::vector<std::size_t> visibleLandmarks;
+    for (std::size_t i = 0; i < systemSLAM.numberLandmarks(); ++i) {
+        visibleLandmarks.push_back(i);
+    }
+    
+    // Perform data association
+    associate(systemSLAM, visibleLandmarks);
+    
+    // Initialize new landmarks for unassociated detections
+    for (std::size_t i = 0; i < tagIds_.size(); ++i) {
+        int tagId = tagIds_[i];
+        
+        // Check if this tag already has a landmark
+        if (findLandmarkByTagId(tagId) == -1) {
+            // New tag - initialize landmark
+            std::cout << "Update: Initializing new landmark for tag " << tagId << std::endl;
+            initializeNewLandmark(systemSLAM, tagId, corners_[i], camera_);
+        }
+    }
+    
+    // Call base class update which performs the optimization
+    Measurement::update(system);
 }
 
 std::vector<Eigen::Matrix2d> MeasurementSLAMAruco::extractCornerCovariances(const SystemSLAM & system, std::size_t idxLandmark) const

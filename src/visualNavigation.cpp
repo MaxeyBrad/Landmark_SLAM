@@ -128,22 +128,21 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                 // Perform data association
                 const std::vector<int> & associations = arucoMeasurement.associate(*slamSystem, visibleLandmarks);
                 
-                // Initialize new landmarks for unassociated detections
-                for (std::size_t i = 0; i < ids.size(); ++i) {
-                    int tagId = ids[i];
-                    
-                    // Check if this tag already has a landmark
-                    if (MeasurementSLAMAruco::findLandmarkByTagId(tagId) == -1) {
-                        // New tag - initialize landmark
-                        std::cout << "Initializing new landmark for tag " << tagId << std::endl;
-                        MeasurementSLAMAruco::initializeNewLandmark(*slamSystem, tagId, corners[i], camera);
-                    }
-                }
+                // Process the measurement through SLAM (this will optimize the state and initialize new landmarks)
+                arucoMeasurement.process(*slamSystem);
                 
                 // Test corner predictions for existing landmarks
                 if (slamSystem->numberLandmarks() > 0) {
-                    std::cout << "Testing corner predictions for " << slamSystem->numberLandmarks() << " landmarks:" << std::endl;
                     Eigen::VectorXd currentState = slamSystem->density.mean();
+                    
+                    // Debug: Show camera pose
+                    std::cout << "Camera pose: pos[" 
+                              << currentState(6) << "," << currentState(7) << "," << currentState(8) 
+                              << "] rot[" 
+                              << currentState(9) << "," << currentState(10) << "," << currentState(11) 
+                              << "]" << std::endl;
+                    
+                    std::cout << "Testing corner predictions for " << slamSystem->numberLandmarks() << " landmarks:" << std::endl;
                     
                     for (std::size_t landmarkIdx = 0; landmarkIdx < slamSystem->numberLandmarks(); ++landmarkIdx) {
                         Eigen::MatrixXd J;  // Jacobian (not used here)

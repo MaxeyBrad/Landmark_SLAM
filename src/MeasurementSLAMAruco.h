@@ -48,6 +48,10 @@ public:
     static int findLandmarkByTagId(int tagId);
     static void addLandmarkTagId(int tagId);
     
+    // Templated log-likelihood for autodiff
+    template <typename Scalar>
+    Scalar logLikelihoodTemplate(const Eigen::VectorX<Scalar> & x, const SystemEstimator & system) const;
+    
     // Landmark initialization
     static Eigen::VectorXd estimateArucoLandmarkPose(const std::vector<cv::Point2f> & corners, const Camera & camera);
     static void initializeNewLandmark(SystemSLAM & system, int tagId, const std::vector<cv::Point2f> & corners, const Camera & camera);
@@ -114,6 +118,56 @@ Eigen::Matrix<Scalar, 8, 1> MeasurementSLAMAruco::predictArucoCorners(const Eige
     }
     
     return predictedCorners;
+}
+
+// Template implementation for log-likelihood (used by autodiff)
+template <typename Scalar>
+Scalar MeasurementSLAMAruco::logLikelihoodTemplate(const Eigen::VectorX<Scalar> & x, const SystemEstimator & system) const
+{
+    const SystemSLAM & slamSystem = static_cast<const SystemSLAM &>(system);
+    Scalar logLikelihood = Scalar(0.0);
+    
+    // Compute likelihood for each associated feature/landmark pair
+    for (std::size_t i = 0; i < idxFeatures_.size(); ++i) {
+        int featureIdx = idxFeatures_[i];
+        
+        if (featureIdx >= 0) {  // Valid association
+            // Get detected corners for this feature
+            const std::vector<cv::Point2f> & detectedCorners = corners_[featureIdx];
+            
+            // Predict corners for this landmark
+            Eigen::Matrix<Scalar, 8, 1> predictedCorners = predictArucoCorners(x, slamSystem, i);
+            
+            // Compute likelihood for each of the 4 corners
+            for (int c = 0; c < 4; ++c) {
+                // Detected corner position
+                Eigen::Vector2<Scalar> detected(Scalar(detectedCorners[c].x), Scalar(detectedCorners[c].y));
+                
+                // Predicted corner position
+                Eigen::Vector2<Scalar> predicted(predictedCorners(2*c), predictedCorners(2*c + 1));
+                
+                // Compute Gaussian likelihood
+                Eigen::Vector2<Scalar> error = detected - predicted;
+                Scalar likelihood = Scalar(-0.5) * error.squaredNorm() / (sigma_ * sigma_) 
+                                  - log(Scalar(2.0 * M_PI * sigma_ * sigma_));
+                logLikelihood += likelihood;
+            }
+        }
+    }
+    
+    // Add penalty for unassociated visible landmarks
+    int numUnassociated = 0;
+    for (int featureIdx : idxFeatures_) {
+        if (featureIdx == -1) {
+            numUnassociated++;
+        }
+    }
+    
+    // Image area in pixels
+    Scalar imageArea = Scalar(camera_.imageSize.width * camera_.imageSize.height);
+    logLikelihood -= Scalar(4.0 * numUnassociated) * log(imageArea);
+    
+    return logLikelihood;
 }
 
 #endif
