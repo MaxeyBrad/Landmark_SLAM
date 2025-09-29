@@ -43,6 +43,15 @@ public:
     const std::vector<int> & getTagIds() const { return tagIds_; }
     const std::vector<std::vector<cv::Point2f>> & getCorners() const { return corners_; }
     
+    // Static landmark management for ArUco tags
+    static std::vector<int> & getLandmarkTagIds() { return landmarkTagIds_; }
+    static int findLandmarkByTagId(int tagId);
+    static void addLandmarkTagId(int tagId);
+    
+    // Landmark initialization
+    static Eigen::VectorXd estimateArucoLandmarkPose(const std::vector<cv::Point2f> & corners, const Camera & camera);
+    static void initializeNewLandmark(SystemSLAM & system, int tagId, const std::vector<cv::Point2f> & corners, const Camera & camera);
+    
 protected:
     virtual void update(SystemBase & system) override;
     
@@ -50,6 +59,9 @@ protected:
     std::vector<int> tagIds_;                                    // Detected tag IDs
     std::vector<std::vector<cv::Point2f>> corners_;             // 4 corners per tag
     std::vector<int> idxFeatures_;                              // Association results
+    
+    // Static storage for landmark tag IDs (shared across all measurements)
+    static std::vector<int> landmarkTagIds_;
     
     // ArUco marker parameters
     static constexpr double MARKER_SIZE = 0.166;                // 166mm edge length
