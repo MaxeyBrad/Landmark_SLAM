@@ -4,9 +4,14 @@
 #include "rotation.hpp"
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core/eigen.hpp>
+#include <opencv2/imgproc.hpp>
 #include <iostream>
 #include <cassert>
 #include <algorithm>
+#include <Eigen/Eigenvalues>
+
+#include <autodiff/forward/dual.hpp>
+#include <autodiff/forward/dual/eigen.hpp>
 
 // Static member initialization - corner positions in marker local frame
 // From assignment Equation 9: corners in order [top-left, top-right, bottom-right, bottom-left]
@@ -50,12 +55,29 @@ MeasurementSLAMAruco::~MeasurementSLAMAruco()
 
 GaussianInfo<double> MeasurementSLAMAruco::predictFeatureDensity(const SystemSLAM & system, std::size_t idxLandmark) const
 {
-    // TODO: Implement feature prediction for single ArUco landmark
-    // This should predict the 8D measurement (4 corners) for one landmark
-    std::cout << "TODO: Implement predictFeatureDensity for ArUco landmark " << idxLandmark << std::endl;
+    const std::size_t & nx = system.density.dim();
+    const std::size_t ny = 8; // 8D measurement (4 corners × 2 coordinates)
+
+    //   y   =   h(x) + v  
+    // \___/   \__________/
+    //   ya  =   ha(x, v)
+    //
+    // Helper function to evaluate ha(x, v) and its Jacobian Ja = [dha/dx, dha/dv]
+    const auto func = [&](const Eigen::VectorXd & xv, Eigen::MatrixXd & Ja)
+    {
+        assert(xv.size() == nx + ny);
+        Eigen::VectorXd x = xv.head(nx);
+        Eigen::VectorXd v = xv.tail(ny);
+        Eigen::MatrixXd J;
+        Eigen::Matrix<double, 8, 1> ya = predictArucoCorners(x, J, system, idxLandmark) + v;
+        Ja.resize(ny, nx + ny);
+        Ja << J, Eigen::MatrixXd::Identity(ny, ny);
+        return ya;
+    };
     
-    // Return dummy for now
-    return GaussianInfo<double>::fromSqrtMoment(Eigen::MatrixXd::Zero(8, 8));
+    auto pv = GaussianInfo<double>::fromSqrtMoment(sigma_*Eigen::MatrixXd::Identity(ny, ny));
+    auto pxv = system.density*pv;   // p(x, v) = p(x)*p(v)
+    return pxv.affineTransform(func);
 }
 
 GaussianInfo<double> MeasurementSLAMAruco::predictFeatureBundleDensity(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) const
@@ -326,8 +348,25 @@ Eigen::Matrix<double, 8, 1> MeasurementSLAMAruco::predictArucoCorners(const Eige
         predictedCorners(2*c + 1) = pixelCoords(1); // y coordinate
     }
     
-    // TODO: Implement Jacobian computation for optimization
-    J = Eigen::MatrixXd::Zero(8, x.size());
+    // Use forward-mode automatic differentiation to compute Jacobian (following Lab 8 pattern)
+    using namespace autodiff;
+    
+    // Convert x to dual numbers
+    Eigen::VectorX<dual> xdual = x.cast<dual>();
+    
+    // Create lambda that calls the template function
+    auto func = [&](const Eigen::VectorX<dual>& xd) {
+        return predictArucoCorners(xd, system, idxLandmark);
+    };
+    
+    // Compute Jacobian using autodiff
+    Eigen::Matrix<dual, 8, 1> ydual;
+    J = jacobian(func, wrt(xdual), at(xdual), ydual);
+    
+    // Update predicted corners with dual values converted to double
+    for (int i = 0; i < 8; ++i) {
+        predictedCorners(i) = val(ydual(i));
+    }
     
     return predictedCorners;
 }
@@ -337,4 +376,82 @@ void MeasurementSLAMAruco::update(SystemBase & system)
     // TODO: Implement measurement update
     // This is where the actual SLAM update happens
     std::cout << "TODO: Implement ArUco measurement update" << std::endl;
+}
+
+std::vector<Eigen::Matrix2d> MeasurementSLAMAruco::extractCornerCovariances(const SystemSLAM & system, std::size_t idxLandmark) const
+{
+    std::vector<Eigen::Matrix2d> cornerCovariances(4);
+    
+    try {
+        // Use proper uncertainty propagation through feature density prediction
+        GaussianInfo<double> featureDensity = predictFeatureDensity(system, idxLandmark);
+        Eigen::MatrixXd cornerCov = featureDensity.cov();
+        
+        // Extract 2x2 covariance blocks for each corner
+        for (int c = 0; c < 4; ++c) {
+            cornerCovariances[c] = cornerCov.block<2, 2>(2*c, 2*c);
+        }
+    } catch (const std::exception & e) {
+        // Fallback to identity covariances if uncertainty propagation fails
+        std::cerr << "Warning: Failed to compute feature density for landmark " << idxLandmark 
+                  << ", using default uncertainty: " << e.what() << std::endl;
+        for (int c = 0; c < 4; ++c) {
+            cornerCovariances[c] = (sigma_ * sigma_) * Eigen::Matrix2d::Identity();
+        }
+    }
+    
+    return cornerCovariances;
+}
+
+void MeasurementSLAMAruco::drawConfidenceEllipses(cv::Mat & image, const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks, double nSigma) const
+{
+    for (std::size_t i = 0; i < idxLandmarks.size(); ++i) {
+        std::size_t landmarkIdx = idxLandmarks[i];
+        int featureIdx = (i < idxFeatures_.size()) ? idxFeatures_[i] : -1;
+        
+        // Determine color based on association status
+        cv::Scalar ellipseColor;
+        if (featureIdx >= 0) {
+            ellipseColor = cv::Scalar(255, 0, 0);  // Blue for tracked landmarks
+        } else {
+            ellipseColor = cv::Scalar(0, 0, 255);  // Red for visible but not detected
+        }
+        
+        try {
+            // Get corner covariances for this landmark
+            std::vector<Eigen::Matrix2d> cornerCovs = extractCornerCovariances(system, landmarkIdx);
+            
+            // Get predicted corner positions
+            Eigen::VectorXd currentState = system.density.mean();
+            Eigen::MatrixXd J;
+            Eigen::Matrix<double, 8, 1> predictedCorners = predictArucoCorners(currentState, J, system, landmarkIdx);
+            
+            // Draw ellipse for each corner
+            for (int c = 0; c < 4; ++c) {
+                cv::Point2f center(predictedCorners(2*c), predictedCorners(2*c + 1));
+                
+                // Compute ellipse parameters from covariance
+                Eigen::Matrix2d cov = cornerCovs[c];
+                Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> eigensolver(cov);
+                
+                if (eigensolver.info() == Eigen::Success) {
+                    Eigen::Vector2d eigenvals = eigensolver.eigenvalues();
+                    Eigen::Matrix2d eigenvecs = eigensolver.eigenvectors();
+                    
+                    // Ellipse semi-axes (scaled by nSigma)
+                    double a = nSigma * std::sqrt(eigenvals(1));  // Major axis
+                    double b = nSigma * std::sqrt(eigenvals(0));  // Minor axis
+                    
+                    // Rotation angle
+                    double angle = std::atan2(eigenvecs(1, 1), eigenvecs(0, 1)) * 180.0 / M_PI;
+                    
+                    // Draw ellipse
+                    cv::ellipse(image, center, cv::Size2f(a, b), angle, 0, 360, ellipseColor, 1);
+                }
+            }
+        } catch (const std::exception & e) {
+            // Skip this landmark if covariance extraction fails
+            std::cerr << "Warning: Failed to draw confidence ellipse for landmark " << landmarkIdx << ": " << e.what() << std::endl;
+        }
+    }
 }

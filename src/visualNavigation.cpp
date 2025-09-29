@@ -68,8 +68,8 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
     // Visual navigation
 
     // Initialisation
-    // Initialize Plot
-    // Plot plot(camera);
+    // Initialize Plot for 3D visualization
+    Plot plot(camera);
 
     // Initialize ArUco detector  
     cv::aruco::Dictionary dictionary = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_250);
@@ -162,17 +162,32 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                 std::cout << "Frame " << cap.get(cv::CAP_PROP_POS_FRAMES) 
                          << ": Detected " << ids.size() << " ArUco markers, " 
                          << slamSystem->numberLandmarks() << " landmarks tracked" << std::endl;
+                
+                // Draw confidence ellipses for uncertainty visualization
+                if (slamSystem->numberLandmarks() > 0) {
+                    std::vector<std::size_t> allLandmarks;
+                    for (std::size_t i = 0; i < slamSystem->numberLandmarks(); ++i) {
+                        allLandmarks.push_back(i);
+                    }
+                    arucoMeasurement.drawConfidenceEllipses(imgProcessed, *slamSystem, allLandmarks, 3.0);
+                }
+                
+                // Update 3D plot with SLAM data (following Lab 8 pattern)
+                slamSystem->view() = imgProcessed.clone();  // Set image for left pane
+                plot.setData(*slamSystem, arucoMeasurement);
+                plot.render();
             }
         }
 
         // Update state
 
-        // Update plot (you'll need minimal SLAM system/measurement for this)
-        // plot.setData(slamSystem, measurement);
-        // plot.render();
-
-        // Get rendered frame
-        //cv::Mat imgout = plot.getFrame();
+        // Get rendered frame from Plot system (includes 3D visualization)
+        cv::Mat imgout = plot.getFrame();
+        if (!imgout.empty()) {
+            std::cout << "Plot frame size: " << imgout.cols << "x" << imgout.rows << std::endl;
+        } else {
+            std::cout << "Warning: Plot getFrame() returned empty image" << std::endl;
+        }
         // Write output frame 
         // if (doExport)
         // {
@@ -180,13 +195,19 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
         //     // bufferedVideoWriter.write(imgout);
         //     bufferedVideoWriter.write(imgProcessed);
         // }
-        // Replace the Plot approach with simple split-screen
-        cv::Mat leftFrame = imgProcessed;  // Video with ArUco markers
-        cv::Mat rightFrame = cv::Mat::zeros(leftFrame.size(), leftFrame.type());  // Blank right side
-
-        // Create split-screen output
+        // Use Plot system output if available, otherwise fallback to manual split-screen
         cv::Mat combinedFrame;
-        cv::hconcat(leftFrame, rightFrame, combinedFrame);
+        if (!imgout.empty()) {
+            combinedFrame = imgout;  // Professional VTK-based split-screen
+            std::cout << "Using Plot system output: " << combinedFrame.cols << "x" << combinedFrame.rows << std::endl;
+        } else {
+            // Fallback to manual split-screen
+            cv::Mat leftFrame = imgProcessed;  // Video with ArUco markers
+            cv::Mat rightFrame = cv::Mat::zeros(leftFrame.size(), leftFrame.type());  // Blank right side
+            cv::hconcat(leftFrame, rightFrame, combinedFrame);
+            std::cout << "Using manual split-screen: " << combinedFrame.cols << "x" << combinedFrame.rows << std::endl;
+        }
+        
         cv::namedWindow("Visual Navigation", cv::WINDOW_NORMAL);
         cv::resizeWindow("Visual Navigation", 1200, 400); // Adjust size as needed
         cv::imshow("Visual Navigation", combinedFrame);
