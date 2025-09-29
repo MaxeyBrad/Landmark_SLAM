@@ -12,6 +12,7 @@
 #include "GaussianInfo.hpp"
 #include "visualNavigation.h"
 #include <opencv2/highgui.hpp>
+#include "rotation.hpp"
 
 void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const std::filesystem::path & cameraPath, int scenario, int interactive, const std::filesystem::path & outputDirectory)
 {
@@ -117,13 +118,39 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
             if (scenario == 1 && slamSystem != nullptr) {
                 // Create ArUco measurement
                 double timestamp = cap.get(cv::CAP_PROP_POS_MSEC) / 1000.0;  // Convert to seconds
+                
+                // IMPORTANT: Predict system state to current timestamp using motion model
+                slamSystem->predict(timestamp);
+                
                 MeasurementSLAMAruco arucoMeasurement(timestamp, camera, ids, corners);
                 
-                // Get current landmarks that should be visible
+                // Get current landmarks that should be visible (within camera FOV)
                 std::vector<std::size_t> visibleLandmarks;
+                
+                // Get current camera pose for FOV checking
+                Eigen::VectorXd currentState = slamSystem->density.mean();
+                Eigen::Vector3d rBNn = currentState.segment<3>(6);       // Body position
+                Eigen::Vector3d thetaBN = currentState.segment<3>(9);    // Body orientation
+                
+                // Convert to OpenCV pose format for Camera::isWorldWithinFOV()
+                Eigen::Matrix3d Rnb = rpy2rot(thetaBN);
+                Pose<double> Tnb(Rnb, rBNn);
+                
+                // Check each landmark to see if it's within camera field of view
                 for (std::size_t i = 0; i < slamSystem->numberLandmarks(); ++i) {
-                    visibleLandmarks.push_back(i);
+                    // Get landmark position from state
+                    std::size_t landmarkIdx = slamSystem->landmarkPositionIndex(i);
+                    Eigen::Vector3d landmarkPos = currentState.segment<3>(landmarkIdx);
+                    cv::Vec3d landmarkPosCV(landmarkPos(0), landmarkPos(1), landmarkPos(2));
+                    
+                    // Check if landmark is within camera field of view
+                    if (camera.isWorldWithinFOV(landmarkPosCV, Tnb)) {
+                        visibleLandmarks.push_back(i);
+                    }
                 }
+                
+                std::cout << "FOV check: " << visibleLandmarks.size() 
+                          << " landmarks visible out of " << slamSystem->numberLandmarks() << " total" << std::endl;
                 
                 // Perform data association
                 const std::vector<int> & associations = arucoMeasurement.associate(*slamSystem, visibleLandmarks);
@@ -162,13 +189,12 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                          << ": Detected " << ids.size() << " ArUco markers, " 
                          << slamSystem->numberLandmarks() << " landmarks tracked" << std::endl;
                 
-                // Draw confidence ellipses for uncertainty visualization
-                if (slamSystem->numberLandmarks() > 0) {
-                    std::vector<std::size_t> allLandmarks;
-                    for (std::size_t i = 0; i < slamSystem->numberLandmarks(); ++i) {
-                        allLandmarks.push_back(i);
-                    }
-                    arucoMeasurement.drawConfidenceEllipses(imgProcessed, *slamSystem, allLandmarks, 3.0);
+                // Draw confidence ellipses for landmarks in field of view (FOV)
+                // This includes both detected landmarks and potentially occluded ones
+                if (visibleLandmarks.size() > 0) {
+                    std::cout << "Drawing ellipses for " << visibleLandmarks.size() 
+                              << " landmarks in FOV (includes detected + potentially occluded)" << std::endl;
+                    arucoMeasurement.drawConfidenceEllipses(imgProcessed, *slamSystem, visibleLandmarks, 3.0);
                 }
                 
                 // Update 3D plot with SLAM data (following Lab 8 pattern)
