@@ -27,6 +27,7 @@ public:
     virtual GaussianInfo<double> predictFeatureBundleDensity(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) const override;
 
     virtual const std::vector<int> & associate(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) override;
+    virtual const std::vector<int> & getAssociations() const override { return idxFeatures_; }
 protected:
     virtual void update(SystemBase & system) override;
     Eigen::Matrix<double, 2, Eigen::Dynamic> Y_;    // Feature bundle
@@ -69,7 +70,7 @@ Eigen::VectorX<Scalar> MeasurementPointBundle::predictFeatureBundle(const Eigen:
     {
         Eigen::Vector2<Scalar> rQOi = predictFeature(x, system, idxLandmarks[i]);
         // Set pair of elements of h
-        // TODO: Lab 9
+        h.segment<2>(2*i) = rQOi;
     }
     return h;
 }

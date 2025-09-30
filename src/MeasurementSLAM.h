@@ -17,6 +17,9 @@ public:
     virtual GaussianInfo<double> predictFeatureDensity(const SystemSLAM & system, std::size_t idxLandmark) const = 0;
     virtual GaussianInfo<double> predictFeatureBundleDensity(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) const = 0;
     virtual const std::vector<int> & associate(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) = 0;
+    
+    // Get association results (for visualization)
+    virtual const std::vector<int> & getAssociations() const = 0;
 
 protected:
     const Camera & camera_;

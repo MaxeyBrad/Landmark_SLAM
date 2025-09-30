@@ -26,6 +26,7 @@ public:
     virtual GaussianInfo<double> predictFeatureDensity(const SystemSLAM & system, std::size_t idxLandmark) const override;
     virtual GaussianInfo<double> predictFeatureBundleDensity(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) const override;
     virtual const std::vector<int> & associate(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) override;
+    virtual const std::vector<int> & getAssociations() const override { return idxFeatures_; }
     
     // Measurement interface methods
     virtual Eigen::VectorXd simulate(const Eigen::VectorXd & x, const SystemEstimator & system) const override;
@@ -57,7 +58,7 @@ public:
     static void initializeNewLandmark(SystemSLAM & system, int tagId, const std::vector<cv::Point2f> & corners, const Camera & camera);
     
     // Visualization support
-    std::vector<Eigen::Matrix2d> extractCornerCovariances(const SystemSLAM & system, std::size_t idxLandmark) const;
+    Eigen::Matrix2d extractTagCenterCovariance(const SystemSLAM & system, std::size_t idxLandmark) const;
     void drawConfidenceEllipses(cv::Mat & image, const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks, double nSigma = 3.0) const;
     
 protected:

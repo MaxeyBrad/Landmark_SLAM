@@ -32,7 +32,7 @@ MeasurementSLAMAruco::MeasurementSLAMAruco(double time,
     : MeasurementSLAM(time, camera)
     , tagIds_(tagIds)
     , corners_(corners)
-    , sigma_(1.0)  // 1 pixel measurement noise - good ArUco detection
+    , sigma_(10.0)  // 10 pixel measurement noise - conservative ArUco detection
 {
     assert(tagIds_.size() == corners_.size());
     
@@ -413,29 +413,30 @@ void MeasurementSLAMAruco::update(SystemBase & system)
     Measurement::update(system);
 }
 
-std::vector<Eigen::Matrix2d> MeasurementSLAMAruco::extractCornerCovariances(const SystemSLAM & system, std::size_t idxLandmark) const
+Eigen::Matrix2d MeasurementSLAMAruco::extractTagCenterCovariance(const SystemSLAM & system, std::size_t idxLandmark) const
 {
-    std::vector<Eigen::Matrix2d> cornerCovariances(4);
-    
     try {
         // Use proper uncertainty propagation through feature density prediction
         GaussianInfo<double> featureDensity = predictFeatureDensity(system, idxLandmark);
         Eigen::MatrixXd cornerCov = featureDensity.cov();
         
-        // Extract 2x2 covariance blocks for each corner
+        // Compute tag center covariance by averaging the 4 corner covariances
+        // Tag center = (corner1 + corner2 + corner3 + corner4) / 4
+        // Cov(center) = (1/16) * sum(Cov(corners)) + cross-correlation terms
+        // For simplicity, we'll use the average of corner covariances
+        Eigen::Matrix2d centerCov = Eigen::Matrix2d::Zero();
         for (int c = 0; c < 4; ++c) {
-            cornerCovariances[c] = cornerCov.block<2, 2>(2*c, 2*c);
+            centerCov += cornerCov.block<2, 2>(2*c, 2*c);
         }
+        centerCov /= 4.0;  // Average the covariances
+        
+        return centerCov;
     } catch (const std::exception & e) {
-        // Fallback to identity covariances if uncertainty propagation fails
+        // Fallback to identity covariance if uncertainty propagation fails
         std::cerr << "Warning: Failed to compute feature density for landmark " << idxLandmark 
                   << ", using default uncertainty: " << e.what() << std::endl;
-        for (int c = 0; c < 4; ++c) {
-            cornerCovariances[c] = (sigma_ * sigma_) * Eigen::Matrix2d::Identity();
-        }
+        return (sigma_ * sigma_) * Eigen::Matrix2d::Identity();
     }
-    
-    return cornerCovariances;
 }
 
 void MeasurementSLAMAruco::drawConfidenceEllipses(cv::Mat & image, const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks, double nSigma) const
@@ -453,36 +454,36 @@ void MeasurementSLAMAruco::drawConfidenceEllipses(cv::Mat & image, const SystemS
         }
         
         try {
-            // Get corner covariances for this landmark
-            std::vector<Eigen::Matrix2d> cornerCovs = extractCornerCovariances(system, landmarkIdx);
+            // Get tag center covariance for this landmark
+            Eigen::Matrix2d centerCov = extractTagCenterCovariance(system, landmarkIdx);
             
             // Get predicted corner positions
             Eigen::VectorXd currentState = system.density.mean();
             Eigen::MatrixXd J;
             Eigen::Matrix<double, 8, 1> predictedCorners = predictArucoCorners(currentState, J, system, landmarkIdx);
             
-            // Draw ellipse for each corner
-            for (int c = 0; c < 4; ++c) {
-                cv::Point2f center(predictedCorners(2*c), predictedCorners(2*c + 1));
+            // Compute tag center as average of 4 corners
+            cv::Point2f tagCenter(
+                (predictedCorners(0) + predictedCorners(2) + predictedCorners(4) + predictedCorners(6)) / 4.0f,
+                (predictedCorners(1) + predictedCorners(3) + predictedCorners(5) + predictedCorners(7)) / 4.0f
+            );
+            
+            // Compute ellipse parameters from covariance
+            Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> eigensolver(centerCov);
+            
+            if (eigensolver.info() == Eigen::Success) {
+                Eigen::Vector2d eigenvals = eigensolver.eigenvalues();
+                Eigen::Matrix2d eigenvecs = eigensolver.eigenvectors();
                 
-                // Compute ellipse parameters from covariance
-                Eigen::Matrix2d cov = cornerCovs[c];
-                Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> eigensolver(cov);
+                // Ellipse semi-axes (scaled by nSigma)
+                double a = nSigma * std::sqrt(std::max(eigenvals(1), 1e-6));  // Major axis
+                double b = nSigma * std::sqrt(std::max(eigenvals(0), 1e-6));  // Minor axis
                 
-                if (eigensolver.info() == Eigen::Success) {
-                    Eigen::Vector2d eigenvals = eigensolver.eigenvalues();
-                    Eigen::Matrix2d eigenvecs = eigensolver.eigenvectors();
-                    
-                    // Ellipse semi-axes (scaled by nSigma)
-                    double a = nSigma * std::sqrt(eigenvals(1));  // Major axis
-                    double b = nSigma * std::sqrt(eigenvals(0));  // Minor axis
-                    
-                    // Rotation angle
-                    double angle = std::atan2(eigenvecs(1, 1), eigenvecs(0, 1)) * 180.0 / M_PI;
-                    
-                    // Draw ellipse
-                    cv::ellipse(image, center, cv::Size2f(a, b), angle, 0, 360, ellipseColor, 1);
-                }
+                // Rotation angle
+                double angle = std::atan2(eigenvecs(1, 1), eigenvecs(0, 1)) * 180.0 / M_PI;
+                
+                // Draw single ellipse for tag center
+                cv::ellipse(image, tagCenter, cv::Size2f(a, b), angle, 0, 360, ellipseColor, 2);
             }
         } catch (const std::exception & e) {
             // Skip this landmark if covariance extraction fails

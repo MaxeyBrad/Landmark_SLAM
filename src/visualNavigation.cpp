@@ -111,7 +111,15 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
 
         // Draw detected markers
         if (!ids.empty()) {
-            cv::aruco::drawDetectedMarkers(imgProcessed, corners, ids);
+            cv::aruco::drawDetectedMarkers(imgProcessed, corners, ids);  // Green outline and ID
+            
+            // Draw pose axes for each detected tag
+            std::vector<cv::Vec3d> rvecs, tvecs;
+            cv::aruco::estimatePoseSingleMarkers(corners, 0.166, camera.cameraMatrix, camera.distCoeffs, rvecs, tvecs);
+            
+            for (size_t i = 0; i < ids.size(); ++i) {
+                cv::drawFrameAxes(imgProcessed, camera.cameraMatrix, camera.distCoeffs, rvecs[i], tvecs[i], 0.1);
+            }
             
             // SLAM processing for ArUco scenario
             std::cout << "Checking SLAM conditions: scenario=" << scenario << ", slamSystem=" << (slamSystem ? "valid" : "null") << std::endl;

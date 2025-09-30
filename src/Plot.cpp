@@ -583,15 +583,28 @@ void Plot::render()
 
     for (std::size_t i = 0; i < pSystem->numberLandmarks(); ++i)
     {
-        // Add components to render
-        hsv2rgb(300*(i)/(pSystem->numberLandmarks()), 1., 1., r, g, b);
-        Eigen::Vector3d rgb;
-        rgb(0) = r*255;
-        rgb(1) = g*255;
-        rgb(2) = b*255;
+        // Determine color based on visibility and tracking status
+        // Get the association results if available
+        const std::vector<int> & associations = pMeasurement->getAssociations();
+        
+        bool isVisible = (i < associations.size());  // Landmark is in the visible list
+        bool isTracked = isVisible && (associations[i] >= 0);  // Has valid association
+        
+        // Set color according to assignment specification:
+        // Blue: visible and tracked
+        // Red: visible but not tracked
+        // Yellow: not visible
+        if (isTracked) {
+            r = 0.0; g = 0.0; b = 1.0;  // Blue
+        } else if (isVisible) {
+            r = 1.0; g = 0.0; b = 0.0;  // Red
+        } else {
+            r = 1.0; g = 1.0; b = 0.0;  // Yellow
+        }
 
-        GaussianInfo prQOi = pMeasurement->predictFeatureDensity(*pSystem, i);
-        plotGaussianConfidenceEllipse(pSystem->view(), prQOi, rgb);
+        // Disabled: Using MeasurementSLAMAruco::drawConfidenceEllipses instead
+        // GaussianInfo prQOi = pMeasurement->predictFeatureDensity(*pSystem, i);
+        // plotGaussianConfidenceEllipse(pSystem->view(), prQOi, rgb);
 
         QuadricPlot & qp = qpLandmarks[i];
         qp.update(pSystem->landmarkPositionDensity(i));
