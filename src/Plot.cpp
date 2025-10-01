@@ -13,6 +13,8 @@
 #include <opencv2/core/eigen.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include "rotation.hpp"
+
 #define vtkRenderingContext2D_AUTOINIT 1(vtkRenderingContextOpenGL2)
 #define vtkRenderingCore_AUTOINIT 3(vtkInteractionStyle,vtkRenderingFreeType,vtkRenderingOpenGL2)
 #define vtkRenderingOpenGL2_AUTOINIT 1(vtkRenderingGL2PSOpenGL2)
@@ -586,9 +588,8 @@ void Plot::render()
         // Determine color based on visibility and tracking status
         // Get the association results if available
         const std::vector<int> & associations = pMeasurement->getAssociations();
-        
+        bool isTracked = (i < associations.size()) && (associations[i] >= 0);  // Has valid association
         bool isVisible = (i < associations.size());  // Landmark is in the visible list
-        bool isTracked = isVisible && (associations[i] >= 0);  // Has valid association
         
         // Set color according to assignment specification:
         // Blue: visible and tracked

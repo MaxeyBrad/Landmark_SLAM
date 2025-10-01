@@ -32,7 +32,7 @@ MeasurementSLAMAruco::MeasurementSLAMAruco(double time,
     : MeasurementSLAM(time, camera)
     , tagIds_(tagIds)
     , corners_(corners)
-    , sigma_(10.0)  // 10 pixel measurement noise - conservative ArUco detection
+    , sigma_(5.0)  // 5 pixel measurement noise - more confident ArUco detection
 {
     assert(tagIds_.size() == corners_.size());
     
@@ -219,9 +219,9 @@ void MeasurementSLAMAruco::initializeNewLandmark(SystemSLAM & system, int tagId,
     Eigen::MatrixXd newSqrtCov = Eigen::MatrixXd::Zero(newDim, newDim);
     newSqrtCov.topLeftCorner(oldDim, oldDim) = currentSqrtCov;
     
-    // Set initial uncertainty for new landmark (relatively high uncertainty)
-    double positionUncertainty = 0.1;  // 10cm position uncertainty
-    double orientationUncertainty = 0.1;  // ~6 degree orientation uncertainty
+    // Set initial uncertainty for new landmark (high uncertainty for better adaptation)
+    double positionUncertainty = 0.5;  // 50cm position uncertainty - much less confident
+    double orientationUncertainty = 0.5;  // ~30 degree orientation uncertainty - much less confident
     
     for (int i = 0; i < 3; ++i) {
         newSqrtCov(oldDim + i, oldDim + i) = positionUncertainty;
@@ -420,15 +420,36 @@ Eigen::Matrix2d MeasurementSLAMAruco::extractTagCenterCovariance(const SystemSLA
         GaussianInfo<double> featureDensity = predictFeatureDensity(system, idxLandmark);
         Eigen::MatrixXd cornerCov = featureDensity.cov();
         
+        // Verify covariance matrix is the right size
+        if (cornerCov.rows() != 8 || cornerCov.cols() != 8) {
+            std::cerr << "Warning: Invalid covariance matrix size " << cornerCov.rows() << "x" << cornerCov.cols() << std::endl;
+            return (sigma_ * sigma_) * Eigen::Matrix2d::Identity();
+        }
+        
         // Compute tag center covariance by averaging the 4 corner covariances
         // Tag center = (corner1 + corner2 + corner3 + corner4) / 4
         // Cov(center) = (1/16) * sum(Cov(corners)) + cross-correlation terms
         // For simplicity, we'll use the average of corner covariances
         Eigen::Matrix2d centerCov = Eigen::Matrix2d::Zero();
         for (int c = 0; c < 4; ++c) {
-            centerCov += cornerCov.block<2, 2>(2*c, 2*c);
+            Eigen::Matrix2d cornerCovBlock = cornerCov.block<2, 2>(2*c, 2*c);
+            
+            // Check for valid covariance values
+            if (cornerCovBlock.hasNaN() || (!cornerCovBlock.allFinite())) {
+                std::cerr << "Warning: Invalid covariance values for corner " << c << std::endl;
+                return (sigma_ * sigma_) * Eigen::Matrix2d::Identity();
+            }
+            
+            centerCov += cornerCovBlock;
         }
         centerCov /= 4.0;  // Average the covariances
+        
+        // Ensure the covariance matrix is positive definite
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> solver(centerCov);
+        if (solver.info() != Eigen::Success || solver.eigenvalues().minCoeff() <= 0) {
+            std::cerr << "Warning: Non-positive definite covariance matrix" << std::endl;
+            return (sigma_ * sigma_) * Eigen::Matrix2d::Identity();
+        }
         
         return centerCov;
     } catch (const std::exception & e) {
@@ -475,15 +496,37 @@ void MeasurementSLAMAruco::drawConfidenceEllipses(cv::Mat & image, const SystemS
                 Eigen::Vector2d eigenvals = eigensolver.eigenvalues();
                 Eigen::Matrix2d eigenvecs = eigensolver.eigenvectors();
                 
+                // Ensure eigenvalues are positive and reasonable
+                double minEigenval = std::max(eigenvals(0), 1e-3);  // At least 1e-3 for visibility
+                double maxEigenval = std::max(eigenvals(1), 1e-3);
+                
+                // Clamp eigenvalues to reasonable range for visualization
+                minEigenval = std::min(minEigenval, 10000.0);  // Max 10000 pixels
+                maxEigenval = std::min(maxEigenval, 10000.0);
+                
                 // Ellipse semi-axes (scaled by nSigma)
-                double a = nSigma * std::sqrt(std::max(eigenvals(1), 1e-6));  // Major axis
-                double b = nSigma * std::sqrt(std::max(eigenvals(0), 1e-6));  // Minor axis
+                double a = nSigma * std::sqrt(maxEigenval);  // Major axis
+                double b = nSigma * std::sqrt(minEigenval);  // Minor axis
+                
+                // Ensure minimum visible size (5 pixels)
+                a = std::max(a, 5.0);
+                b = std::max(b, 5.0);
                 
                 // Rotation angle
                 double angle = std::atan2(eigenvecs(1, 1), eigenvecs(0, 1)) * 180.0 / M_PI;
                 
-                // Draw single ellipse for tag center
-                cv::ellipse(image, tagCenter, cv::Size2f(a, b), angle, 0, 360, ellipseColor, 2);
+                // Validate ellipse parameters before drawing
+                if (a > 0 && b > 0 && a < 10000 && b < 10000 && 
+                    tagCenter.x >= 0 && tagCenter.x < image.cols && 
+                    tagCenter.y >= 0 && tagCenter.y < image.rows) {
+                    cv::ellipse(image, tagCenter, cv::Size2f(a, b), angle, 0, 360, ellipseColor, 2);
+                } else {
+                    // Fallback: draw simple circle if ellipse parameters are invalid
+                    cv::circle(image, tagCenter, 10, ellipseColor, 2);
+                }
+            } else {
+                // Fallback: draw simple circle if eigendecomposition fails
+                cv::circle(image, tagCenter, 15, ellipseColor, 2);
             }
         } catch (const std::exception & e) {
             // Skip this landmark if covariance extraction fails

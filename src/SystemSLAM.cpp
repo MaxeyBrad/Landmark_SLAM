@@ -138,10 +138,10 @@ GaussianInfo<double> SystemSLAM::processNoiseDensity(double dt) const
     SQ = Eigen::MatrixXd::Zero(6, 6);
     
     // Translational velocity noise standard deviation (m/s/sqrt(s))
-    double sigma_v = 0.01;  // 1 cm/s per sqrt(second) - reduced noise for more confident motion
+    double sigma_v = 0.2;  // 20 cm/s per sqrt(second) - increased for better tracking
     
     // Angular velocity noise standard deviation (rad/s/sqrt(s))  
-    double sigma_omega = 0.005;  // ~0.3 degrees/s per sqrt(second) - reduced noise
+    double sigma_omega = 0.1;  // ~6 degrees/s per sqrt(second) - increased for better tracking
     
     // Diagonal noise model (uncorrelated velocity components)
     for (int i = 0; i < 3; ++i) {
