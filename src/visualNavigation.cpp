@@ -81,7 +81,7 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
     if (scenario == 1) {  // ArUco scenario
         // Initialize with minimal state (body velocities + pose)
         Eigen::VectorXd initialMean = Eigen::VectorXd::Zero(12);  // [vBNb(3), omegaBNb(3), rBNn(3), Thetanb(3)]
-        Eigen::MatrixXd initialCovariance = 0.1 * Eigen::MatrixXd::Identity(12, 12);  // Small initial uncertainty
+        Eigen::MatrixXd initialCovariance = 1 * Eigen::MatrixXd::Identity(12, 12);  // Small initial uncertainty
         GaussianInfo<double> initialDensity = GaussianInfo<double>::fromSqrtMoment(initialMean, initialCovariance);
         slamSystem = new SystemSLAMPoseLandmarks(initialDensity);
         std::cout << "Initialized SLAM system for ArUco markers" << std::endl;

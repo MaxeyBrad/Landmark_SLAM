@@ -12,6 +12,8 @@
 
 #include <autodiff/forward/dual.hpp>
 #include <autodiff/forward/dual/eigen.hpp>
+#include <autodiff/forward/dual.hpp>
+#include <autodiff/forward/dual/eigen.hpp>
 
 // Static member initialization - corner positions in marker local frame
 // From assignment Equation 9: corners in order [top-left, top-right, bottom-right, bottom-left]
@@ -32,7 +34,7 @@ MeasurementSLAMAruco::MeasurementSLAMAruco(double time,
     : MeasurementSLAM(time, camera)
     , tagIds_(tagIds)
     , corners_(corners)
-    , sigma_(5.0)  // 5 pixel measurement noise - more confident ArUco detection
+    , sigma_(15.0)  // 5 pixel measurement noise - more confident ArUco detection
 {
     assert(tagIds_.size() == corners_.size());
     
@@ -82,13 +84,45 @@ GaussianInfo<double> MeasurementSLAMAruco::predictFeatureDensity(const SystemSLA
 
 GaussianInfo<double> MeasurementSLAMAruco::predictFeatureBundleDensity(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) const
 {
-    // TODO: Implement feature prediction for bundle of ArUco landmarks
-    // This should predict measurements for multiple landmarks simultaneously
-    std::cout << "TODO: Implement predictFeatureBundleDensity for " << idxLandmarks.size() << " landmarks" << std::endl;
+    const std::size_t & nx = system.density.dim();
+    const std::size_t ny = 8 * idxLandmarks.size(); // 8D per landmark (4 corners × 2 coordinates)
+
+    // Helper function to evaluate ha(x, v) and its Jacobian Ja = [dha/dx, dha/dv]
+    const auto func = [&](const Eigen::VectorXd & xv, Eigen::MatrixXd & Ja)
+    {
+        assert(xv.size() == nx + ny);
+        Eigen::VectorXd x = xv.head(nx);
+        Eigen::VectorXd v = xv.tail(ny);
+        
+        // Predict corners for all landmarks
+        Eigen::VectorXd ya(ny);
+        Eigen::MatrixXd J(ny, nx);
+        
+        for (std::size_t i = 0; i < idxLandmarks.size(); ++i) {
+            // Predict corners for this landmark
+            Eigen::MatrixXd Jlandmark;
+            Eigen::Matrix<double, 8, 1> cornerPrediction = predictArucoCorners(x, Jlandmark, system, idxLandmarks[i]);
+            
+            // Store prediction in combined vector
+            ya.segment<8>(8*i) = cornerPrediction;
+            
+            // Store Jacobian in combined matrix
+            J.block(8*i, 0, 8, nx) = Jlandmark;
+        }
+        
+        // Add noise: y = h(x) + v
+        ya += v;
+        
+        // Set up combined Jacobian [dha/dx, dha/dv]
+        Ja.resize(ny, nx + ny);
+        Ja << J, Eigen::MatrixXd::Identity(ny, ny);
+        return ya;
+    };
     
-    // Return dummy for now - 8D per landmark
-    int totalDim = 8 * idxLandmarks.size();
-    return GaussianInfo<double>::fromSqrtMoment(Eigen::MatrixXd::Zero(totalDim, totalDim));
+    // Create noise covariance for all landmarks (independent noise per corner)
+    auto pv = GaussianInfo<double>::fromSqrtMoment(sigma_ * Eigen::MatrixXd::Identity(ny, ny));
+    auto pxv = system.density * pv;   // p(x, v) = p(x)*p(v)
+    return pxv.affineTransform(func);
 }
 
 const std::vector<int> & MeasurementSLAMAruco::associate(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks)
@@ -318,11 +352,21 @@ double MeasurementSLAMAruco::logLikelihood(const Eigen::VectorXd & x, const Syst
 
 double MeasurementSLAMAruco::logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system, Eigen::VectorXd & g, Eigen::MatrixXd & H) const
 {
-    // TODO: Implement log-likelihood with gradient and Hessian
-    std::cout << "TODO: Implement ArUco log-likelihood with gradient and Hessian" << std::endl;
-    g = Eigen::VectorXd::Zero(x.size());
-    H = Eigen::MatrixXd::Zero(x.size(), x.size());
-    return 0.0;
+    using namespace autodiff;
+    
+    // Convert x to dual numbers for Hessian computation
+    Eigen::VectorX<dual2nd> x_dual2nd = x.cast<dual2nd>();
+    
+    // Create lambda that calls the template function
+    auto func = [&](const Eigen::VectorX<dual2nd>& xd) {
+        return logLikelihoodTemplate(xd, system);
+    };
+    
+    // Compute value, gradient, and Hessian using autodiff
+    dual2nd loglik_dual2nd;
+    H = hessian(func, wrt(x_dual2nd), at(x_dual2nd), loglik_dual2nd, g);
+    
+    return val(loglik_dual2nd);
 }
 
 Eigen::Matrix<double, 8, 1> MeasurementSLAMAruco::predictArucoCorners(const Eigen::VectorXd & x, Eigen::MatrixXd & J, const SystemSLAM & system, std::size_t idxLandmark) const
