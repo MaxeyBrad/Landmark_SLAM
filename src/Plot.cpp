@@ -475,6 +475,77 @@ vtkActor2D * ImagePlot::getActor() const
 
 
 // -------------------------------------------------------
+// Custom Interactor Style Implementation
+// -------------------------------------------------------
+vtkStandardNewMacro(SLAMInteractorStyle);
+
+void SLAMInteractorStyle::OnKeyPress()
+{
+    vtkRenderWindowInteractor *rwi = this->Interactor;
+    std::string key = rwi->GetKeySym();
+    
+    // Handle frame advancement in interactive mode
+    if (interactiveMode)
+    {
+        std::cout << "Key pressed in VTK window: '" << key << "' - advancing to next frame..." << std::endl;
+        advanceFrame = true;
+        return;
+    }
+    
+    if (key == "h" || key == "H")
+    {
+        std::cout << "\n=== VTK Interactive Controls ===" << std::endl;
+        std::cout << "Mouse controls:" << std::endl;
+        std::cout << "  Left button + drag  : Rotate camera" << std::endl;
+        std::cout << "  Right button + drag : Zoom in/out" << std::endl;
+        std::cout << "  Middle button + drag: Pan camera" << std::endl;
+        std::cout << "Keyboard shortcuts:" << std::endl;
+        std::cout << "  'r' or 'R' : Reset camera view" << std::endl;
+        std::cout << "  'h' or 'H' : Show this help" << std::endl;
+        std::cout << "  'f' or 'F' : Fly to fit all objects" << std::endl;
+        std::cout << "  'w' or 'W' : Toggle wireframe mode" << std::endl;
+        std::cout << "  'q' or 'Q' : Quit (exit application)" << std::endl;
+        if (interactiveMode) {
+            std::cout << "  Any key    : Advance to next frame (interactive mode)" << std::endl;
+        }
+        std::cout << "==============================\n" << std::endl;
+        return;
+    }
+    else if (key == "f" || key == "F")
+    {
+        // Fit camera to show all actors
+        this->GetCurrentRenderer()->ResetCamera();
+        std::cout << "Camera fitted to show all objects" << std::endl;
+        return;
+    }
+    else if (key == "w" || key == "W")
+    {
+        // Toggle wireframe mode for all actors
+        vtkActorCollection *actors = this->GetCurrentRenderer()->GetActors();
+        actors->InitTraversal();
+        static bool wireframe = false;
+        wireframe = !wireframe;
+        
+        for (vtkIdType i = 0; i < actors->GetNumberOfItems(); i++)
+        {
+            vtkActor *actor = actors->GetNextActor();
+            if (actor && actor->GetProperty())
+            {
+                if (wireframe)
+                    actor->GetProperty()->SetRepresentationToWireframe();
+                else
+                    actor->GetProperty()->SetRepresentationToSurface();
+            }
+        }
+        std::cout << "Wireframe mode: " << (wireframe ? "ON" : "OFF") << std::endl;
+        return;
+    }
+    
+    // Forward to parent class for other keys (including 'r' for reset and 'q' for quit)
+    vtkInteractorStyleTrackballCamera::OnKeyPress();
+}
+
+// -------------------------------------------------------
 // Plot
 // -------------------------------------------------------
 
@@ -627,6 +698,66 @@ void Plot::render()
 void Plot::start() const
 {
     interactor->Start(); // block on interactor
+}
+
+void Plot::enableInteraction()
+{
+    // Set up custom interactor style with enhanced controls
+    interactorStyle = vtkSmartPointer<SLAMInteractorStyle>::New();
+    interactor->SetInteractorStyle(interactorStyle);
+    
+    // Initialize the interactor for non-blocking interaction
+    if (!interactor->GetInitialized()) {
+        interactor->Initialize();
+    }
+    
+    // Ensure the render window is visible
+    renderWindow->Render();
+    
+    std::cout << "VTK Interactive controls enabled!" << std::endl;
+    std::cout << "  Mouse: Left-drag to rotate, Right-drag to zoom, Middle-drag to pan" << std::endl;
+    std::cout << "  Press 'h' for help with keyboard shortcuts" << std::endl;
+}
+
+void Plot::processEvents()
+{
+    // Process pending VTK events without blocking
+    if (interactor->GetInitialized()) {
+        // Check for events and process them
+        interactor->ProcessEvents();
+        
+        // Also render if the window needs updating
+        if (renderWindow->GetNeverRendered() || renderWindow->GetDesiredUpdateRate() > 0) {
+            renderWindow->Render();
+        }
+    }
+}
+
+void Plot::setInteractiveMode(bool isInteractive)
+{
+    if (interactorStyle) {
+        interactorStyle->setInteractiveMode(isInteractive);
+        if (isInteractive) {
+            std::cout << "Interactive frame advancement mode enabled - press any key in VTK window to advance frames" << std::endl;
+        } else {
+            std::cout << "Interactive frame advancement mode disabled" << std::endl;
+        }
+    }
+}
+
+bool Plot::shouldAdvanceFrame() const
+{
+    if (interactorStyle) {
+        return interactorStyle->shouldAdvanceFrame();
+    }
+    return false;
+}
+
+void Plot::resetAdvanceFrame()
+{
+    if (interactorStyle) {
+        interactorStyle->resetAdvanceFrame();
+    }
 }
 
 

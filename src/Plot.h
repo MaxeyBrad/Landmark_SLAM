@@ -28,6 +28,8 @@
 #include <vtkTransform.h>
 #include <vtkUnsignedCharArray.h>
 #include <vtkUnstructuredGrid.h>
+#include <vtkInteractorStyleTrackballCamera.h>
+#include <vtkCommand.h>
 
 #include "Camera.h"
 #include "GaussianInfo.hpp"
@@ -138,6 +140,31 @@ struct ImagePlot
 };
 
 // -------------------------------------------------------
+// Custom Interactor Style with Keyboard Shortcuts
+// -------------------------------------------------------
+class SLAMInteractorStyle : public vtkInteractorStyleTrackballCamera
+{
+public:
+    static SLAMInteractorStyle* New();
+    vtkTypeMacro(SLAMInteractorStyle, vtkInteractorStyleTrackballCamera);
+    
+    virtual void OnKeyPress() override;
+    
+    // Frame advancement control for interactive mode
+    void setInteractiveMode(bool isInteractive) { interactiveMode = isInteractive; }
+    bool shouldAdvanceFrame() const { return advanceFrame; }
+    void resetAdvanceFrame() { advanceFrame = false; }
+    
+protected:
+    SLAMInteractorStyle() : interactiveMode(false), advanceFrame(false) {}
+    virtual ~SLAMInteractorStyle() {}
+    
+private:
+    bool interactiveMode;
+    bool advanceFrame;
+};
+
+// -------------------------------------------------------
 // Plot
 // -------------------------------------------------------
 struct Plot
@@ -146,6 +173,11 @@ public:
     explicit Plot(const Camera & camera);
     void render();
     void start() const;
+    void enableInteraction();  // Enable non-blocking interaction
+    void processEvents();      // Process VTK events without blocking
+    void setInteractiveMode(bool isInteractive);  // Set interactive frame advancement mode
+    bool shouldAdvanceFrame() const;              // Check if frame should advance
+    void resetAdvanceFrame();                     // Reset frame advancement flag
     void setData(const SystemSLAM & system, const MeasurementSLAM & measurement);
     cv::Mat getFrame() const;
 
@@ -157,6 +189,7 @@ private:
     vtkSmartPointer<vtkRenderer>     threeDimRenderer;
     vtkSmartPointer<vtkRenderer>     imageRenderer;
     vtkSmartPointer<vtkRenderWindowInteractor> interactor;
+    vtkSmartPointer<SLAMInteractorStyle> interactorStyle;
     QuadricPlot qpCamera;
     std::vector<QuadricPlot> qpLandmarks;
     FrustumPlot fp;

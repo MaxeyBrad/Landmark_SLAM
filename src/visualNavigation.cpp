@@ -1,6 +1,10 @@
 #include <filesystem>
 #include <string>
 #include <iostream>
+#include <chrono>
+#include <thread>
+#include <termios.h>
+#include <unistd.h>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/aruco.hpp>
 #include "BufferedVideo.h"
@@ -13,6 +17,28 @@
 #include "visualNavigation.h"
 #include <opencv2/highgui.hpp>
 #include "rotation.hpp"
+
+// Function to read a single character without requiring Enter
+char getChar() {
+    struct termios oldt, newt;
+    char ch;
+    
+    // Get current terminal settings
+    tcgetattr(STDIN_FILENO, &oldt);
+    newt = oldt;
+    
+    // Disable canonical mode and echo
+    newt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    
+    // Read single character
+    ch = getchar();
+    
+    // Restore original terminal settings
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+    
+    return ch;
+}
 
 void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const std::filesystem::path & cameraPath, int scenario, int interactive, const std::filesystem::path & outputDirectory)
 {
@@ -71,6 +97,14 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
     // Initialisation
     // Initialize Plot for 3D visualization
     Plot plot(camera);
+    
+    // Enable interactive VTK controls
+    plot.enableInteraction();
+    
+    // Set interactive mode based on parameter
+    if (interactive == 2) {
+        plot.setInteractiveMode(true);
+    }
 
     // Initialize ArUco detector  
     cv::aruco::Dictionary dictionary = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_250);
@@ -232,6 +266,9 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                 slamSystem->view() = imgProcessed.clone();  // Set image for left pane
                 plot.setData(*slamSystem, arucoMeasurement);
                 plot.render();
+                
+                // Process VTK interactive events (non-blocking)
+                plot.processEvents();
             }
         }
 
@@ -264,17 +301,17 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
             std::cout << "Using manual split-screen: " << combinedFrame.cols << "x" << combinedFrame.rows << std::endl;
         }
         
-        // The VTK Plot system handles display, so we only need OpenCV window as a fallback
-        if (imgout.empty()) {
-            // Only show OpenCV window if Plot system fails
-            cv::namedWindow("Visual Navigation", cv::WINDOW_NORMAL);
-            cv::resizeWindow("Visual Navigation", 1200, 400);
-            cv::imshow("Visual Navigation", combinedFrame);
+        // Handle interactive modes
+        if (interactive == 2) {
+            // Interactive mode 2: Pause on every frame (VTK window key press)
+            std::cout << "Frame " << cap.get(cv::CAP_PROP_POS_FRAMES) << " - Press any key in VTK window to continue..." << std::endl;
             
-            if (interactive == 2) {
-                cv::waitKey(0); // Wait for key press each frame
-            } else {
-                cv::waitKey(1); // Non-blocking display
+            // Wait for key press in VTK window
+            plot.resetAdvanceFrame();
+            while (!plot.shouldAdvanceFrame()) {
+                plot.processEvents();
+                // Small delay to prevent busy waiting
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
         }
 
@@ -299,5 +336,4 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
         std::cout << "SLAM system cleanup complete" << std::endl;
     }
 
-    cv::destroyAllWindows();
 }
