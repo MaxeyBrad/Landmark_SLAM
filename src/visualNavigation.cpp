@@ -81,16 +81,7 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
 
     cv::VideoWriter videoOut;
     BufferedVideoWriter bufferedVideoWriter(3);
-    if (doExport)
-    {
-        cv::Size frameSize;
-        frameSize.width     = 2*cap.get(cv::CAP_PROP_FRAME_WIDTH);
-        frameSize.height    = cap.get(cv::CAP_PROP_FRAME_HEIGHT);
-        double outputFps    = fps;
-        int codec = cv::VideoWriter::fourcc('m', 'p', '4', 'v'); // manually specify output video codec
-        videoOut.open(outputPath.string(), codec, outputFps, frameSize);
-        bufferedVideoWriter.start(videoOut);
-    }
+    bool videoWriterInitialized = false;
 
     // Visual navigation
 
@@ -131,7 +122,7 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
         initialMean.segment<3>(6) << 0.0, 0.0, -1.6;
 
         // Orientation: facing North, level (roll = 0, pitch = 0, yaw = 0) in radians
-        initialMean.segment<3>(9) << -M_PI/2.0, 0.0, 0.0;
+        initialMean.segment<3>(9) << -M_PI/2.0, M_PI, 0.0;
 
         // Initial covariance (tweak if you want looser priors on pose)
         Eigen::MatrixXd initialCovariance = Eigen::MatrixXd::Identity(12, 12);
@@ -315,8 +306,31 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
             }
         }
 
+        // Initialize video writer on first frame (when we know the actual frame size)
+        if (doExport && !videoWriterInitialized && !combinedFrame.empty()) {
+            cv::Size frameSize(combinedFrame.cols, combinedFrame.rows);
+            double outputFps = fps;
+            int codec = cv::VideoWriter::fourcc('X', 'V', 'I', 'D');
+            videoOut.open(outputPath.string(), codec, outputFps, frameSize);
+            
+            if (!videoOut.isOpened()) {
+                std::cerr << "Error: Failed to open video writer!" << std::endl;
+                std::cerr << "Output path: " << outputPath.string() << std::endl;
+                std::cerr << "Frame size: " << frameSize.width << "x" << frameSize.height << std::endl;
+                std::cerr << "FPS: " << outputFps << std::endl;
+                doExport = false;
+            } else {
+                std::cout << "Video writer successfully opened for export:" << std::endl;
+                std::cout << "  Output: " << outputPath.string() << std::endl;
+                std::cout << "  Size: " << frameSize.width << "x" << frameSize.height << std::endl;
+                std::cout << "  FPS: " << outputFps << std::endl;
+                bufferedVideoWriter.start(videoOut);
+                videoWriterInitialized = true;
+            }
+        }
+        
         // Write output frame
-        if (doExport)
+        if (doExport && videoWriterInitialized)
         {
             bufferedVideoWriter.write(combinedFrame);
         }
@@ -324,7 +338,7 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
 
     }
 
-    if (doExport)
+    if (doExport && videoWriterInitialized)
     {
          bufferedVideoWriter.stop();
     }
