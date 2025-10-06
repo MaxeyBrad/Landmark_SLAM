@@ -35,7 +35,7 @@ MeasurementSLAMAruco::MeasurementSLAMAruco(double time,
     : MeasurementSLAM(time, camera)
     , tagIds_(tagIds)
     , corners_(corners)
-    , sigma_(15.0)  // 5 pixel measurement noise - more confident ArUco detection
+    , sigma_(2.0)  // 5 pixel measurement noise - more confident ArUco detection
 {
     assert(tagIds_.size() == corners_.size());
     
@@ -228,50 +228,238 @@ Eigen::VectorXd MeasurementSLAMAruco::estimateArucoLandmarkPose(const std::vecto
     return pose;
 }
 
-void MeasurementSLAMAruco::initializeNewLandmark(SystemSLAM & system, int tagId, const std::vector<cv::Point2f> & corners, const Camera & camera)
-{
-    // Estimate landmark pose
-    Eigen::VectorXd landmarkPose = estimateArucoLandmarkPose(corners, camera);
+// void MeasurementSLAMAruco::initializeNewLandmark(SystemSLAM & system, int tagId, const std::vector<cv::Point2f> & corners, const Camera & camera)
+// {
+//     // Estimate landmark pose
+//     Eigen::VectorXd landmarkPose = estimateArucoLandmarkPose(corners, camera);
     
-    if (landmarkPose.norm() == 0.0) {
-        std::cerr << "Warning: Cannot initialize landmark for tag " << tagId << " - pose estimation failed" << std::endl;
+//     if (landmarkPose.norm() == 0.0) {
+//         std::cerr << "Warning: Cannot initialize landmark for tag " << tagId << " - pose estimation failed" << std::endl;
+//         return;
+//     }
+    
+//     // Get current state and sqrt covariance
+//     Eigen::VectorXd currentState = system.density.mean();
+//     Eigen::MatrixXd currentSqrtCov = system.density.sqrtCov();
+    
+//     // Expand state vector to include new landmark
+//     int oldDim = currentState.size();
+//     int newDim = oldDim + 6;  // Add 6DOF for new landmark
+    
+//     Eigen::VectorXd newState(newDim);
+//     newState.head(oldDim) = currentState;
+//     newState.tail(6) = landmarkPose;
+    
+//     // Expand sqrt covariance matrix
+//     Eigen::MatrixXd newSqrtCov = Eigen::MatrixXd::Zero(newDim, newDim);
+//     newSqrtCov.topLeftCorner(oldDim, oldDim) = currentSqrtCov;
+    
+//     // Set initial uncertainty for new landmark (high uncertainty for better adaptation)
+//     double positionUncertainty = 0.5;  // 50cm position uncertainty - much less confident
+//     double orientationUncertainty = 0.5;  // ~30 degree orientation uncertainty - much less confident
+    
+//     for (int i = 0; i < 3; ++i) {
+//         newSqrtCov(oldDim + i, oldDim + i) = positionUncertainty;
+//         newSqrtCov(oldDim + 3 + i, oldDim + 3 + i) = orientationUncertainty;
+//     }
+    
+//     // Update system density
+//     system.density = GaussianInfo<double>::fromSqrtMoment(newState, newSqrtCov);
+    
+//     // Add tag ID to our tracking
+//     addLandmarkTagId(tagId);
+    
+//     std::cout << "Initialized new landmark for tag " << tagId 
+//               << " at position: [" << landmarkPose.segment<3>(0).transpose() << "]"
+//               << " orientation: [" << landmarkPose.segment<3>(3).transpose() << "]" << std::endl;
+// }
+
+// In MeasurementSLAMAruco.cpp
+
+void MeasurementSLAMAruco::initializeNewLandmark(
+    SystemSLAM & system, 
+    int tagId, 
+    const std::vector<cv::Point2f> & corners, 
+    const Camera & camera)
+{
+    std::cout << "\n=== Initializing Landmark for Tag " << tagId << " ===" << std::endl;
+    
+    // ═══════════════════════════════════════════════════════════════
+    // STEP 1: Estimate Tag Pose in CAMERA FRAME using PnP
+    // ═══════════════════════════════════════════════════════════════
+    
+    // Define the 4 corners of the marker in its LOCAL frame
+    // Marker is centered at origin, lying in XY plane (Z=0)
+    // Corner order: top-left, top-right, bottom-right, bottom-left
+    std::vector<cv::Point3f> objectPoints;
+    double half = MARKER_SIZE / 2.0;  // 0.083 meters
+    objectPoints.push_back(cv::Point3f(-half,  half, 0.0));  // Top-left
+    objectPoints.push_back(cv::Point3f( half,  half, 0.0));  // Top-right
+    objectPoints.push_back(cv::Point3f( half, -half, 0.0));  // Bottom-right
+    objectPoints.push_back(cv::Point3f(-half, -half, 0.0));  // Bottom-left
+    
+    // Solve PnP to get tag pose relative to camera
+    cv::Vec3d rvec, tvec;
+    bool success = cv::solvePnP(
+        objectPoints,           // 3D points in marker frame
+        corners,                // 2D points in image
+        camera.cameraMatrix,    // Camera intrinsics
+        camera.distCoeffs,      // Distortion coefficients
+        rvec,                   // OUTPUT: Rotation (Rodrigues)
+        tvec,                   // OUTPUT: Translation
+        false,                  // Don't use extrinsic guess
+        cv::SOLVEPNP_ITERATIVE  // Algorithm
+    );
+    
+    if (!success) {
+        std::cerr << "ERROR: solvePnP failed for tag " << tagId << std::endl;
         return;
     }
     
-    // Get current state and sqrt covariance
-    Eigen::VectorXd currentState = system.density.mean();
-    Eigen::MatrixXd currentSqrtCov = system.density.sqrtCov();
+    // Convert rotation vector to rotation matrix
+    cv::Mat R_cL_cv;
+    cv::Rodrigues(rvec, R_cL_cv);
     
-    // Expand state vector to include new landmark
-    int oldDim = currentState.size();
-    int newDim = oldDim + 6;  // Add 6DOF for new landmark
+    // Convert OpenCV matrices to Eigen
+    Eigen::Matrix3d R_cL;  // Rotation from landmark frame to camera frame
+    Eigen::Vector3d r_L_c; // Landmark position in camera frame
     
-    Eigen::VectorXd newState(newDim);
-    newState.head(oldDim) = currentState;
-    newState.tail(6) = landmarkPose;
+    cv::cv2eigen(R_cL_cv, R_cL);
+    r_L_c << tvec[0], tvec[1], tvec[2];
     
-    // Expand sqrt covariance matrix
-    Eigen::MatrixXd newSqrtCov = Eigen::MatrixXd::Zero(newDim, newDim);
-    newSqrtCov.topLeftCorner(oldDim, oldDim) = currentSqrtCov;
+    std::cout << "PnP Result (in camera frame):" << std::endl;
+    std::cout << "  Position: [" << r_L_c.transpose() << "] meters" << std::endl;
+    std::cout << "  Distance: " << r_L_c.norm() << " meters" << std::endl;
+    std::cout << "  Rotation det: " << R_cL.determinant() << " (should be 1.0)" << std::endl;
     
-    // Set initial uncertainty for new landmark (high uncertainty for better adaptation)
-    double positionUncertainty = 0.5;  // 50cm position uncertainty - much less confident
-    double orientationUncertainty = 0.5;  // ~30 degree orientation uncertainty - much less confident
-    
-    for (int i = 0; i < 3; ++i) {
-        newSqrtCov(oldDim + i, oldDim + i) = positionUncertainty;
-        newSqrtCov(oldDim + 3 + i, oldDim + 3 + i) = orientationUncertainty;
+    // Sanity checks
+    if (r_L_c(2) <= 0.0) {
+        std::cerr << "WARNING: Tag is behind camera (z=" << r_L_c(2) << ")!" << std::endl;
+    }
+    if (r_L_c.norm() < 0.2 || r_L_c.norm() > 20.0) {
+        std::cerr << "WARNING: Suspicious distance: " << r_L_c.norm() << "m" << std::endl;
     }
     
-    // Update system density
+    
+    // ═══════════════════════════════════════════════════════════════
+    // STEP 2: Get Current Body Pose from SLAM State
+    // ═══════════════════════════════════════════════════════════════
+    
+    Eigen::VectorXd currentState = system.density.mean();
+    
+    // Extract body position in world frame (NED coordinates)
+    Eigen::Vector3d r_B_n = currentState.segment<3>(6);
+    
+    // Extract body orientation in world frame (RPY Euler angles)
+    Eigen::Vector3d theta_bn = currentState.segment<3>(9);
+    
+    // Convert body orientation to rotation matrix
+    // R_nb: rotation matrix from body frame to world frame
+    Eigen::Matrix3d R_nb = rpy2rot(theta_bn);
+    
+    std::cout << "Current Body Pose (in world frame):" << std::endl;
+    std::cout << "  Position: [" << r_B_n.transpose() << "] meters (NED)" << std::endl;
+    std::cout << "  Orientation (RPY): [" << theta_bn.transpose() << "] radians" << std::endl;
+    
+    
+    // ═══════════════════════════════════════════════════════════════
+    // STEP 3: Transform Landmark from CAMERA FRAME to WORLD FRAME
+    // ═══════════════════════════════════════════════════════════════
+    
+    // CRITICAL ASSUMPTION: Body frame = Camera frame (per assignment)
+    // Therefore: r_B_n = r_C_n  and  R_nb = R_nc
+    
+    // Transform landmark position to world frame
+    // r_L^n = r_B^n + R_n^b * r_L^c
+    Eigen::Vector3d r_L_n = r_B_n + R_nb * r_L_c;
+    
+    // Transform landmark orientation to world frame
+    // R_n^L = R_n^b * R_c^L
+    Eigen::Matrix3d R_nL = R_nb * R_cL;
+    
+    // Convert rotation matrix to Euler angles
+    Eigen::Vector3d theta_Ln = rot2rpy(R_nL);
+    
+    std::cout << "Landmark Pose (in world frame):" << std::endl;
+    std::cout << "  Position: [" << r_L_n.transpose() << "] meters (NED)" << std::endl;
+    std::cout << "  Orientation (RPY): [" << theta_Ln.transpose() << "] radians" << std::endl;
+    
+    // Verification: transform back to camera frame
+    Eigen::Vector3d r_L_c_check = R_nb.transpose() * (r_L_n - r_B_n);
+    double error = (r_L_c_check - r_L_c).norm();
+    std::cout << "Round-trip verification error: " << error << " meters (should be ~0)" << std::endl;
+    
+    if (error > 0.01) {
+        std::cerr << "ERROR: Coordinate transformation is incorrect!" << std::endl;
+        std::cerr << "  Original r_L_c:   [" << r_L_c.transpose() << "]" << std::endl;
+        std::cerr << "  Round-trip r_L_c: [" << r_L_c_check.transpose() << "]" << std::endl;
+        return;
+    }
+    
+    
+    // ═══════════════════════════════════════════════════════════════
+    // STEP 4: Expand State Vector to Include New Landmark
+    // ═══════════════════════════════════════════════════════════════
+    
+    // Get current state dimension
+    int oldDim = currentState.size();
+    int newDim = oldDim + 6;  // Add 6-DOF landmark (3 pos + 3 orient)
+    
+    // Create expanded state vector
+    Eigen::VectorXd newState(newDim);
+    newState.head(oldDim) = currentState;  // Copy existing state
+    newState.segment<3>(oldDim) = r_L_n;        // Landmark position
+    newState.segment<3>(oldDim + 3) = theta_Ln; // Landmark orientation
+    
+    std::cout << "State expansion:" << std::endl;
+    std::cout << "  Old dimension: " << oldDim << std::endl;
+    std::cout << "  New dimension: " << newDim << std::endl;
+    std::cout << "  Landmark index: " << oldDim << std::endl;
+    
+    
+    // ═══════════════════════════════════════════════════════════════
+    // STEP 5: Expand Covariance Matrix (Square Root Form)
+    // ═══════════════════════════════════════════════════════════════
+    
+    Eigen::MatrixXd currentSqrtCov = system.density.sqrtCov();
+    Eigen::MatrixXd newSqrtCov = Eigen::MatrixXd::Zero(newDim, newDim);
+    
+    // Copy existing covariance
+    newSqrtCov.topLeftCorner(oldDim, oldDim) = currentSqrtCov;
+    
+    // Set initial uncertainty for new landmark
+    // These values reflect our confidence in the PnP estimate
+    double positionUncertainty = 0.5;      // 50cm position uncertainty
+    double orientationUncertainty = 0.5;   // ~30° orientation uncertainty
+    
+    // Fill in diagonal elements for new landmark
+    for (int i = 0; i < 3; ++i) {
+        newSqrtCov(oldDim + i, oldDim + i) = positionUncertainty;         // Position
+        newSqrtCov(oldDim + 3 + i, oldDim + 3 + i) = orientationUncertainty; // Orientation
+    }
+    
+    std::cout << "Initial uncertainty:" << std::endl;
+    std::cout << "  Position: " << positionUncertainty << " meters (sqrt)" << std::endl;
+    std::cout << "  Orientation: " << orientationUncertainty << " radians (sqrt)" << std::endl;
+    
+    
+    // ═══════════════════════════════════════════════════════════════
+    // STEP 6: Update System Density
+    // ═══════════════════════════════════════════════════════════════
+    
     system.density = GaussianInfo<double>::fromSqrtMoment(newState, newSqrtCov);
     
-    // Add tag ID to our tracking
+    
+    // ═══════════════════════════════════════════════════════════════
+    // STEP 7: Track Tag ID for Data Association
+    // ═══════════════════════════════════════════════════════════════
+    
     addLandmarkTagId(tagId);
     
-    std::cout << "Initialized new landmark for tag " << tagId 
-              << " at position: [" << landmarkPose.segment<3>(0).transpose() << "]"
-              << " orientation: [" << landmarkPose.segment<3>(3).transpose() << "]" << std::endl;
+    std::cout << "SUCCESS: Initialized landmark for tag " << tagId << std::endl;
+    std::cout << "  Landmark index: " << (landmarkTagIds_.size() - 1) << std::endl;
+    std::cout << "  Total landmarks: " << landmarkTagIds_.size() << std::endl;
+    std::cout << "=== Initialization Complete ===" << std::endl;
 }
 
 Eigen::VectorXd MeasurementSLAMAruco::simulate(const Eigen::VectorXd & x, const SystemEstimator & system) const
@@ -429,33 +617,130 @@ Eigen::Matrix<double, 8, 1> MeasurementSLAMAruco::predictArucoCorners(const Eige
     return predictedCorners;
 }
 
+// void MeasurementSLAMAruco::update(SystemBase & system)
+// {
+//     SystemSLAM & systemSLAM = dynamic_cast<SystemSLAM &>(system);
+    
+//     // Get visible landmarks for data association
+//     std::vector<std::size_t> visibleLandmarks;
+//     for (std::size_t i = 0; i < systemSLAM.numberLandmarks(); ++i) {
+//         visibleLandmarks.push_back(i);
+//     }
+    
+//     // Perform data association
+//     associate(systemSLAM, visibleLandmarks);
+    
+//     // Initialize new landmarks for unassociated detections
+//     for (std::size_t i = 0; i < tagIds_.size(); ++i) {
+//         int tagId = tagIds_[i];
+        
+//         // Check if this tag already has a landmark
+//         if (findLandmarkByTagId(tagId) == -1) {
+//             // New tag - initialize landmark
+//             std::cout << "Update: Initializing new landmark for tag " << tagId << std::endl;
+//             initializeNewLandmark(systemSLAM, tagId, corners_[i], camera_);
+//         }
+//     }
+    
+//     // Call base class update which performs the optimization
+//     Measurement::update(system);
+// }
+
+// In MeasurementSLAMAruco.cpp
+
 void MeasurementSLAMAruco::update(SystemBase & system)
 {
-    SystemSLAM & systemSLAM = dynamic_cast<SystemSLAM &>(system);
+    // Cast to correct system type
+    SystemSLAM & slamSystem = dynamic_cast<SystemSLAM &>(system);
     
-    // Get visible landmarks for data association
-    std::vector<std::size_t> visibleLandmarks;
-    for (std::size_t i = 0; i < systemSLAM.numberLandmarks(); ++i) {
-        visibleLandmarks.push_back(i);
+    std::cout << "\n=== MeasurementSLAMAruco::update() ===" << std::endl;
+    std::cout << "Detected " << tagIds_.size() << " tags" << std::endl;
+    std::cout << "Current map has " << slamSystem.numberLandmarks() << " landmarks" << std::endl;
+    
+    // ────────────────────────────────────────────────────────────
+    // STEP 1: Data Association
+    // ────────────────────────────────────────────────────────────
+    // Build list of all existing landmarks
+    std::vector<std::size_t> existingLandmarks;
+    for (std::size_t i = 0; i < slamSystem.numberLandmarks(); ++i) {
+        existingLandmarks.push_back(i);
     }
     
-    // Perform data association
-    associate(systemSLAM, visibleLandmarks);
+    // Perform data association (matches detected tags to landmarks)
+    // This populates idxFeatures_ vector
+    associate(slamSystem, existingLandmarks);
     
-    // Initialize new landmarks for unassociated detections
-    for (std::size_t i = 0; i < tagIds_.size(); ++i) {
-        int tagId = tagIds_[i];
-        
-        // Check if this tag already has a landmark
-        if (findLandmarkByTagId(tagId) == -1) {
-            // New tag - initialize landmark
-            std::cout << "Update: Initializing new landmark for tag " << tagId << std::endl;
-            initializeNewLandmark(systemSLAM, tagId, corners_[i], camera_);
+    
+    // ────────────────────────────────────────────────────────────
+    // STEP 2: Remove Failed Landmarks (OPTIONAL - implement later)
+    // ────────────────────────────────────────────────────────────
+    // For now, skip this step. You can add it later for robustness.
+    // This would remove landmarks that haven't been seen for N consecutive frames
+    
+    
+    // ────────────────────────────────────────────────────────────
+    // STEP 3 & 4: Identify Surplus Features and Initialize New Landmarks
+    // ────────────────────────────────────────────────────────────
+    
+    // Track which detections were matched to existing landmarks
+    std::vector<bool> detectionUsed(tagIds_.size(), false);
+    for (int featureIdx : idxFeatures_) {
+        if (featureIdx >= 0) {
+            detectionUsed[featureIdx] = true;
         }
     }
     
-    // Call base class update which performs the optimization
-    Measurement::update(system);
+    // Initialize new landmarks for unassociated detections
+    int numNewLandmarks = 0;
+    for (std::size_t i = 0; i < tagIds_.size(); ++i) {
+        if (!detectionUsed[i]) {
+            // This tag was detected but not associated with any landmark
+            
+            // Check if we've already created a landmark for this tag ID
+            int existingLandmarkIdx = findLandmarkByTagId(tagIds_[i]);
+            
+            if (existingLandmarkIdx == -1) {
+                // This is a NEW tag we've never seen before
+                std::cout << "  Initializing new landmark for tag " << tagIds_[i] << std::endl;
+                
+                initializeNewLandmark(slamSystem, tagIds_[i], corners_[i], camera_);
+                numNewLandmarks++;
+            } else {
+                std::cout << "  Tag " << tagIds_[i] << " already has landmark (idx=" 
+                          << existingLandmarkIdx << "), skipping" << std::endl;
+            }
+        }
+    }
+    
+    std::cout << "Initialized " << numNewLandmarks << " new landmarks" << std::endl;
+    std::cout << "Map now has " << slamSystem.numberLandmarks() << " landmarks" << std::endl;
+    
+    
+    // ────────────────────────────────────────────────────────────
+    // STEP 5: Perform the Actual Measurement Update
+    // ────────────────────────────────────────────────────────────
+    // This calls the base class which runs the optimization
+    // to refine the state estimate based on the measurements
+    
+    // IMPORTANT: Only do measurement update if we have valid associations
+    int numAssociations = 0;
+    for (int featureIdx : idxFeatures_) {
+        if (featureIdx >= 0) numAssociations++;
+    }
+    
+    if (numAssociations > 0) {
+        std::cout << "Performing measurement update with " << numAssociations 
+                  << " associated landmarks..." << std::endl;
+        
+        // This runs the BFGS trust region optimization to refine the state
+        Measurement::update(system);
+        
+        std::cout << "Measurement update complete" << std::endl;
+    } else {
+        std::cout << "No valid associations - skipping measurement update" << std::endl;
+    }
+    
+    std::cout << "=== update() complete ===" << std::endl;
 }
 
 Eigen::Matrix2d MeasurementSLAMAruco::extractTagCenterCovariance(const SystemSLAM & system, std::size_t idxLandmark) const

@@ -214,7 +214,7 @@ GaussianInfo<double> SystemSLAM::processNoiseDensity(double dt) const
     double sigma_v = 0.2;  // 20 cm/s per sqrt(second) - increased for better tracking
     
     // Angular velocity noise standard deviation (rad/s/sqrt(s))  
-    double sigma_omega = 0.1;  // ~6 degrees/s per sqrt(second) - increased for better tracking
+    double sigma_omega = 0.05;  // ~6 degrees/s per sqrt(second) - increased for better tracking
     
     // Diagonal noise model (uncorrelated velocity components)
     for (int i = 0; i < 3; ++i) {

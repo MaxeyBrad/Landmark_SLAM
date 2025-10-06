@@ -122,10 +122,24 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
         initialMean.segment<3>(6) << 0.0, 0.0, -1.6;
 
         // Orientation: facing North, level (roll = 0, pitch = 0, yaw = 0) in radians
-        initialMean.segment<3>(9) << -M_PI/2.0, M_PI, 0.0;
+        // initialMean.segment<3>(9) << -M_PI/2.0, M_PI, 0.0;
+        initialMean.segment<3>(9) << M_PI/2, 0.0, M_PI/2;
+        // initialMean.segment<3>(9) << 0.0, 0.0, 0.0;
 
-        // Initial covariance (tweak if you want looser priors on pose)
+        // // Initial covariance (tweak if you want looser priors on pose)
+        // Eigen::MatrixXd initialCovariance = Eigen::MatrixXd::Identity(12, 12);
+
         Eigen::MatrixXd initialCovariance = Eigen::MatrixXd::Identity(12, 12);
+
+        // Velocity uncertainty (totally unknown)
+        initialCovariance.block<3,3>(0,0) *= 1.0;      // Linear velocity: 1 m/s std
+        initialCovariance.block<3,3>(3,3) *= 0.5;      // Angular velocity: 0.5 rad/s std
+
+        // Position uncertainty (you KNOW you start at [0,0,-1.6])
+        initialCovariance.block<3,3>(6,6) *= 0.01;     // Position: 1cm std (very confident!)
+
+        // Orientation uncertainty (you KNOW you start level, facing north)
+        initialCovariance.block<3,3>(9,9) *= 0.01;     // Orientation: ~0.5° std (very confident!)
 
         GaussianInfo<double> initialDensity =
             GaussianInfo<double>::fromSqrtMoment(initialMean, initialCovariance);
