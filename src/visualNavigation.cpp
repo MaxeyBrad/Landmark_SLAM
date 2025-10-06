@@ -76,16 +76,39 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
     cv::aruco::Dictionary dictionary = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_250);
     cv::aruco::ArucoDetector detector(dictionary);
 
+    // // Initialize SLAM system for ArUco scenario
+    // SystemSLAMPoseLandmarks * slamSystem = nullptr;
+    // if (scenario == 1) {  // ArUco scenario
+    //     // Initialize with minimal state (body velocities + pose)
+    //     Eigen::VectorXd initialMean = Eigen::VectorXd::Zero(12);  // [vBNb(3), omegaBNb(3), rBNn(3), Thetanb(3)]
+    //     Eigen::MatrixXd initialCovariance = 1 * Eigen::MatrixXd::Identity(12, 12);  // Small initial uncertainty
+    //     GaussianInfo<double> initialDensity = GaussianInfo<double>::fromSqrtMoment(initialMean, initialCovariance);
+    //     slamSystem = new SystemSLAMPoseLandmarks(initialDensity);
+    //     std::cout << "Initialized SLAM system for ArUco markers" << std::endl;
+    // }
+
     // Initialize SLAM system for ArUco scenario
-    SystemSLAMPoseLandmarks * slamSystem = nullptr;
+    SystemSLAMPoseLandmarks* slamSystem = nullptr;
     if (scenario == 1) {  // ArUco scenario
-        // Initialize with minimal state (body velocities + pose)
-        Eigen::VectorXd initialMean = Eigen::VectorXd::Zero(12);  // [vBNb(3), omegaBNb(3), rBNn(3), Thetanb(3)]
-        Eigen::MatrixXd initialCovariance = 1 * Eigen::MatrixXd::Identity(12, 12);  // Small initial uncertainty
-        GaussianInfo<double> initialDensity = GaussianInfo<double>::fromSqrtMoment(initialMean, initialCovariance);
+        // State layout: [ v_B^b(3), ω_B^b(3), r_B^n = (N,E,D)(3), Θ_nb = (roll, pitch, yaw)[ZYX] (3) ]
+        Eigen::VectorXd initialMean = Eigen::VectorXd::Zero(12);
+
+        // Position: 1.6 m UP in NED  => D = -1.6
+        initialMean.segment<3>(6) << 0.0, 0.0, -1.6;
+
+        // Orientation: facing North, level (roll = 0, pitch = 0, yaw = 0) in radians
+        initialMean.segment<3>(9) << -M_PI/2.0, 0.0, 0.0;
+
+        // Initial covariance (tweak if you want looser priors on pose)
+        Eigen::MatrixXd initialCovariance = Eigen::MatrixXd::Identity(12, 12);
+
+        GaussianInfo<double> initialDensity =
+            GaussianInfo<double>::fromSqrtMoment(initialMean, initialCovariance);
+
         slamSystem = new SystemSLAMPoseLandmarks(initialDensity);
-        std::cout << "Initialized SLAM system for ArUco markers" << std::endl;
+        std::cout << "Initialised SLAM (Aruco): r_B^n=[0,0,-1.6], Θ_nb=[0,0,0]" << std::endl;
     }
+
 
     while (true)
     {

@@ -14,7 +14,7 @@
 #include <autodiff/forward/dual/eigen.hpp>
 #include <autodiff/forward/dual.hpp>
 #include <autodiff/forward/dual/eigen.hpp>
-#include <autodiff/forward/dual2nd.hpp>
+//#include <autodiff/forward/dual2nd.hpp>
 
 // Static member initialization - corner positions in marker local frame
 // From assignment Equation 9: corners in order [top-left, top-right, bottom-right, bottom-left]

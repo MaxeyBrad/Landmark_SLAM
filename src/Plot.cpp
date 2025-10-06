@@ -547,7 +547,7 @@ Plot::Plot(const Camera & camera)
     // rFNn
     threeDimRenderer->GetActiveCamera()->SetFocalPoint(0,0,0);
     // rCNn - zoom out by increasing scale factor
-    double sc = 20;  // Increased from 2 to 10 for wider view
+    double sc = 40;  // Increased from 2 to 10 for wider view
     threeDimRenderer->GetActiveCamera()->SetPosition(-0.75*sc,-0.75*sc,-0.5*sc);
     threeDimRenderer->GetActiveCamera()->SetViewUp(0,0,-1);
 
