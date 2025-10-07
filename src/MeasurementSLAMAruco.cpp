@@ -35,7 +35,7 @@ MeasurementSLAMAruco::MeasurementSLAMAruco(double time,
     : MeasurementSLAM(time, camera)
     , tagIds_(tagIds)
     , corners_(corners)
-    , sigma_(10.0)  // 5 pixel measurement noise - more confident ArUco detection
+    , sigma_(20.0)  // 5 pixel measurement noise - more confident ArUco detection
 {
     assert(tagIds_.size() == corners_.size());
     
