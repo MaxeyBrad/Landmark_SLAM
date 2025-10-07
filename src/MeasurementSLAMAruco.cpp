@@ -35,7 +35,7 @@ MeasurementSLAMAruco::MeasurementSLAMAruco(double time,
     : MeasurementSLAM(time, camera)
     , tagIds_(tagIds)
     , corners_(corners)
-    , sigma_(2.0)  // 5 pixel measurement noise - more confident ArUco detection
+    , sigma_(10.0)  // 5 pixel measurement noise - more confident ArUco detection
 {
     assert(tagIds_.size() == corners_.size());
     
@@ -331,6 +331,18 @@ void MeasurementSLAMAruco::initializeNewLandmark(
     std::cout << "  Position: [" << r_L_c.transpose() << "] meters" << std::endl;
     std::cout << "  Distance: " << r_L_c.norm() << " meters" << std::endl;
     std::cout << "  Rotation det: " << R_cL.determinant() << " (should be 1.0)" << std::endl;
+
+    // Right after PnP
+    std::cout << "=== Camera Frame Convention Check ===" << std::endl;
+    std::cout << "r_L_c (marker in camera): [" << r_L_c.transpose() << "]" << std::endl;
+    std::cout << "  X (right?): " << r_L_c(0) << std::endl;
+    std::cout << "  Y (down?):  " << r_L_c(1) << std::endl;
+    std::cout << "  Z (forward?): " << r_L_c(2) << std::endl;
+
+    // Check if Z is positive and points forward
+    if (r_L_c(2) < 0) {
+        std::cerr << "ERROR: Tag is behind camera! Frame convention wrong!" << std::endl;
+    }
     
     // Sanity checks
     if (r_L_c(2) <= 0.0) {
