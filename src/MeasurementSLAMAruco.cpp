@@ -35,7 +35,7 @@ MeasurementSLAMAruco::MeasurementSLAMAruco(double time,
     : MeasurementSLAM(time, camera)
     , tagIds_(tagIds)
     , corners_(corners)
-    , sigma_(20.0)  // 5 pixel measurement noise - more confident ArUco detection
+    , sigma_(10.0)  // 5 pixel measurement noise - more confident ArUco detection
 {
     assert(tagIds_.size() == corners_.size());
     
@@ -377,17 +377,35 @@ void MeasurementSLAMAruco::initializeNewLandmark(
     // ═══════════════════════════════════════════════════════════════
     // STEP 3: Transform Landmark from CAMERA FRAME to WORLD FRAME
     // ═══════════════════════════════════════════════════════════════
-    
-    // CRITICAL ASSUMPTION: Body frame = Camera frame (per assignment)
-    // Therefore: r_B_n = r_C_n  and  R_nb = R_nc
-    
+    // Define rotation from NED body frame to camera frame (same as in prediction)
+    Eigen::Matrix3d R_bc;
+    R_bc << 0, 0, 1,   // Body X (North) = Camera Z (forward)
+            1, 0, 0,   // Body Y (East) = Camera X (right)
+            0, 1, 0;   // Body Z (Down) = Camera Y (down)
+
+    // Transform landmark from camera frame to body frame
+    Eigen::Vector3d r_L_b = R_bc * r_L_c;
+    Eigen::Matrix3d R_bL = R_bc * R_cL;
+
     // Transform landmark position to world frame
-    // r_L^n = r_B^n + R_n^b * r_L^c
-    Eigen::Vector3d r_L_n = r_B_n + R_nb * r_L_c;
-    
+    // r_L^n = r_B^n + R_n^b * r_L^b
+    Eigen::Vector3d r_L_n = r_B_n + R_nb * r_L_b;
+
     // Transform landmark orientation to world frame
-    // R_n^L = R_n^b * R_c^L
-    Eigen::Matrix3d R_nL = R_nb * R_cL;
+    // R_n^L = R_n^b * R_b^L
+    Eigen::Matrix3d R_nL = R_nb * R_bL;
+
+
+    // CRITICAL ASSUMPTION: Body frame = Camera frame (per assignment)
+    // // Therefore: r_B_n = r_C_n  and  R_nb = R_nc
+    
+    // // Transform landmark position to world frame
+    // // r_L^n = r_B^n + R_n^b * r_L^c
+    // Eigen::Vector3d r_L_n = r_B_n + R_nb * r_L_c;
+    
+    // // Transform landmark orientation to world frame
+    // // R_n^L = R_n^b * R_c^L
+    // Eigen::Matrix3d R_nL = R_nb * R_cL;
     
     // Convert rotation matrix to Euler angles
     Eigen::Vector3d theta_Ln = rot2rpy(R_nL);
@@ -397,7 +415,9 @@ void MeasurementSLAMAruco::initializeNewLandmark(
     std::cout << "  Orientation (RPY): [" << theta_Ln.transpose() << "] radians" << std::endl;
     
     // Verification: transform back to camera frame
-    Eigen::Vector3d r_L_c_check = R_nb.transpose() * (r_L_n - r_B_n);
+    // Verification: transform back to camera frame
+    Eigen::Vector3d r_L_b_check = R_nb.transpose() * (r_L_n - r_B_n);
+    Eigen::Vector3d r_L_c_check = R_bc.transpose() * r_L_b_check;
     double error = (r_L_c_check - r_L_c).norm();
     std::cout << "Round-trip verification error: " << error << " meters (should be ~0)" << std::endl;
     
@@ -571,35 +591,92 @@ double MeasurementSLAMAruco::logLikelihood(const Eigen::VectorXd & x, const Syst
 }
 
 Eigen::Matrix<double, 8, 1> MeasurementSLAMAruco::predictArucoCorners(const Eigen::VectorXd & x, Eigen::MatrixXd & J, const SystemSLAM & system, std::size_t idxLandmark) const
-{
+{   
+
+//////////////////////////////////////////////////////////
+    // DEBUG OUTPUT - just print, don't redeclare!
+    std::cout << "\n=== predictArucoCorners DEBUG ===" << std::endl;
+    std::cout << "MARKER_SIZE = " << MARKER_SIZE << std::endl;
+    for (int i = 0; i < 4; i++) {
+        std::cout << "Corner " << i << " (local): " << CORNER_POSITIONS_LOCAL[i].transpose() << std::endl;
+    }
+    
     // Get camera pose from state (body frame = camera frame assumption)
     Eigen::Vector3d rBNn = x.segment<3>(6);   // Body position in world frame
     Eigen::Vector3d thetaBN = x.segment<3>(9); // Body orientation (RPY Euler angles)
+    
+    std::cout << "Body position: " << rBNn.transpose() << std::endl;
+    std::cout << "Body orientation: " << thetaBN.transpose() << std::endl;
     
     // Get landmark pose from state
     std::size_t landmarkIdx = system.landmarkPositionIndex(idxLandmark);
     Eigen::Vector3d rLNn = x.segment<3>(landmarkIdx);     // Landmark position
     Eigen::Vector3d thetaLN = x.segment<3>(landmarkIdx + 3); // Landmark orientation
     
+    std::cout << "Landmark position: " << rLNn.transpose() << std::endl;
+    std::cout << "Landmark orientation: " << thetaLN.transpose() << std::endl;
+
+////////////////////////////////////////////////////
+
+    // // Get camera pose from state (body frame = camera frame assumption)
+    // Eigen::Vector3d rBNn = x.segment<3>(6);   // Body position in world frame
+    // Eigen::Vector3d thetaBN = x.segment<3>(9); // Body orientation (RPY Euler angles)
+    
+    // // Get landmark pose from state
+    // std::size_t landmarkIdx = system.landmarkPositionIndex(idxLandmark);
+    // Eigen::Vector3d rLNn = x.segment<3>(landmarkIdx);     // Landmark position
+    // Eigen::Vector3d thetaLN = x.segment<3>(landmarkIdx + 3); // Landmark orientation
+    
     // Convert Euler angles to rotation matrices
     Eigen::Matrix3d Rnb = rpy2rot(thetaBN);  // World to body rotation
     Eigen::Matrix3d RnL = rpy2rot(thetaLN);  // World to landmark rotation
+
+        // ========== ADD THIS SECTION ==========
+    // Define fixed rotation from NED body frame to camera frame
+    // Camera frame convention: X=right, Y=down, Z=forward
+    // NED (body) frame: X=North, Y=East, Z=Down
+    // When body is at zero orientation, camera points North:
+    //   - Camera forward (Z) points North (body X)
+    //   - Camera right (X) points East (body Y)  
+    //   - Camera down (Y) points Down (body Z)
+    Eigen::Matrix3d R_bc;  // Rotation from camera frame to body frame
+    R_bc << 0, 0, 1,   // Body X (North) = Camera Z (forward)
+            1, 0, 0,   // Body Y (East) = Camera X (right)
+            0, 1, 0;   // Body Z (Down) = Camera Y (down)
+    // ========== END OF ADDITION ==========
     
     // Predict 4 corners in pixel coordinates
     Eigen::Matrix<double, 8, 1> predictedCorners;
     
     for (int c = 0; c < 4; ++c) {
-        // Get corner position in landmark local frame (from static member)
+        // // Get corner position in landmark local frame (from static member)
+        // Eigen::Vector3d rLcL = CORNER_POSITIONS_LOCAL[c];
+        
+        // // Transform corner to world frame (Equation 8)
+        // Eigen::Vector3d rCNn = RnL * rLcL + rLNn;
+        
+        // // Transform to camera frame (body frame = camera frame)
+        // Eigen::Vector3d rCBb = Rnb.transpose() * (rCNn - rBNn);
+        
+        // // Project to image coordinates using camera calibration
+        // Eigen::Vector2d pixelCoords = camera_.vectorToPixel(rCBb);
+                // Get corner position in landmark local frame (from static member)
         Eigen::Vector3d rLcL = CORNER_POSITIONS_LOCAL[c];
         
         // Transform corner to world frame (Equation 8)
         Eigen::Vector3d rCNn = RnL * rLcL + rLNn;
         
-        // Transform to camera frame (body frame = camera frame)
+        // Transform to body frame (body frame is NED)
         Eigen::Vector3d rCBb = Rnb.transpose() * (rCNn - rBNn);
         
+        // ========== CHANGE THIS LINE ==========
+        // Transform from body frame (NED) to camera frame
+        Eigen::Vector3d rCCc = R_bc.transpose() * rCBb;
+        
         // Project to image coordinates using camera calibration
-        Eigen::Vector2d pixelCoords = camera_.vectorToPixel(rCBb);
+        Eigen::Vector2d pixelCoords = camera_.vectorToPixel(rCCc);  // Now using camera frame!
+        // ========== END OF CHANGE ==========
+        
         
         // Store in result vector [x1,y1,x2,y2,x3,y3,x4,y4]
         predictedCorners(2*c) = pixelCoords(0);     // x coordinate

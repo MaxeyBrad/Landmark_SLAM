@@ -123,8 +123,8 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
 
         // Orientation: facing North, level (roll = 0, pitch = 0, yaw = 0) in radians
         // initialMean.segment<3>(9) << -M_PI/2.0, M_PI, 0.0;
-        initialMean.segment<3>(9) << M_PI/2, 0.0, M_PI/2;
-        // initialMean.segment<3>(9) << 0.0, 0.0, 0.0;
+        // initialMean.segment<3>(9) << M_PI/2, 0.0, M_PI/2;
+        initialMean.segment<3>(9) << 0.0, 0.0, 0.0;
 
         // // Initial covariance (tweak if you want looser priors on pose)
         // Eigen::MatrixXd initialCovariance = Eigen::MatrixXd::Identity(12, 12);

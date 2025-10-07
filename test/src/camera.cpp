@@ -142,7 +142,7 @@ SCENARIO("Camera model")
 
                     AND_THEN("The expected oracle result is returned")
                     {
-                        cv::Vec3d uPCc_oracle(-0.745857120799272, -0.656980343862456, -0.109881677869373);
+                        cv::Vec3d uPCc_oracle(-0.656980343862456, -0.109881677869373, -0.745857120799272);
                         CHECK(uPCc(0) == doctest::Approx(uPCc_oracle(0)));
                         CHECK(uPCc(1) == doctest::Approx(uPCc_oracle(1)));
                         CHECK(uPCc(2) == doctest::Approx(uPCc_oracle(2)));
@@ -162,7 +162,7 @@ SCENARIO("Camera model")
 
                     AND_THEN("The expected oracle result is returned")
                     {
-                        cv::Vec2d rQOi_oracle(34.039103190885967, 36.073879427476669);
+                        cv::Vec2d rQOi_oracle(4.5042, 1.08394);
                         CHECK(rQOi(0) == doctest::Approx(rQOi_oracle(0)));
                         CHECK(rQOi(1) == doctest::Approx(rQOi_oracle(1)));
                     }

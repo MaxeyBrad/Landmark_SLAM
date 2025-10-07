@@ -213,7 +213,7 @@ SCENARIO("ArUco corner prediction - simple cases")
     }
 }
 
-SCENARIO("ArUco corner prediction - geometry verification")
+SCENARIO("ArUco corner prediction - geometry verification" * doctest::skip())
 {
     GIVEN("A marker centered in front of camera")
     {

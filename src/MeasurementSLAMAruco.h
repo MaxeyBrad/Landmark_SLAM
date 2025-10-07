@@ -80,7 +80,47 @@ protected:
     static const std::array<Eigen::Vector3d, 4> CORNER_POSITIONS_LOCAL;
 };
 
-// Template implementation for ArUco corner prediction (works with autodiff)
+// // Template implementation for ArUco corner prediction (works with autodiff)
+// template <typename Scalar>
+// Eigen::Matrix<Scalar, 8, 1> MeasurementSLAMAruco::predictArucoCorners(const Eigen::VectorX<Scalar> & x, const SystemSLAM & system, std::size_t idxLandmark) const
+// {
+//     // Get camera pose from state (body frame = camera frame assumption)
+//     Eigen::Vector3<Scalar> rBNn = x.template segment<3>(6);   // Body position in world frame
+//     Eigen::Vector3<Scalar> thetaBN = x.template segment<3>(9); // Body orientation (RPY Euler angles)
+    
+//     // Get landmark pose from state
+//     std::size_t landmarkIdx = system.landmarkPositionIndex(idxLandmark);
+//     Eigen::Vector3<Scalar> rLNn = x.template segment<3>(landmarkIdx);     // Landmark position
+//     Eigen::Vector3<Scalar> thetaLN = x.template segment<3>(landmarkIdx + 3); // Landmark orientation
+    
+//     // Convert Euler angles to rotation matrices
+//     Eigen::Matrix3<Scalar> Rnb = rpy2rot(thetaBN);  // World to body rotation
+//     Eigen::Matrix3<Scalar> RnL = rpy2rot(thetaLN);  // World to landmark rotation
+    
+//     // Predict 4 corners in pixel coordinates
+//     Eigen::Matrix<Scalar, 8, 1> predictedCorners;
+    
+//     for (int c = 0; c < 4; ++c) {
+//         // Get corner position in landmark local frame (convert to Scalar type)
+//         Eigen::Vector3<Scalar> rLcL = CORNER_POSITIONS_LOCAL[c].cast<Scalar>();
+        
+//         // Transform corner to world frame (Equation 8)
+//         Eigen::Vector3<Scalar> rCNn = RnL * rLcL + rLNn;
+        
+//         // Transform to camera frame (body frame = camera frame)
+//         Eigen::Vector3<Scalar> rCBb = Rnb.transpose() * (rCNn - rBNn);
+        
+//         // Project to image coordinates using camera calibration
+//         Eigen::Vector2<Scalar> pixelCoords = camera_.vectorToPixel(rCBb);
+        
+//         // Store in result vector [x1,y1,x2,y2,x3,y3,x4,y4]
+//         predictedCorners(2*c) = pixelCoords(0);     // x coordinate
+//         predictedCorners(2*c + 1) = pixelCoords(1); // y coordinate
+//     }
+    
+//     return predictedCorners;
+// }
+
 template <typename Scalar>
 Eigen::Matrix<Scalar, 8, 1> MeasurementSLAMAruco::predictArucoCorners(const Eigen::VectorX<Scalar> & x, const SystemSLAM & system, std::size_t idxLandmark) const
 {
@@ -97,6 +137,12 @@ Eigen::Matrix<Scalar, 8, 1> MeasurementSLAMAruco::predictArucoCorners(const Eige
     Eigen::Matrix3<Scalar> Rnb = rpy2rot(thetaBN);  // World to body rotation
     Eigen::Matrix3<Scalar> RnL = rpy2rot(thetaLN);  // World to landmark rotation
     
+    // ADD THIS: Define rotation from NED body frame to camera frame
+    Eigen::Matrix3<Scalar> R_bc;
+    R_bc << Scalar(0), Scalar(0), Scalar(1),   // Body X (North) = Camera Z (forward)
+            Scalar(1), Scalar(0), Scalar(0),   // Body Y (East) = Camera X (right)
+            Scalar(0), Scalar(1), Scalar(0);   // Body Z (Down) = Camera Y (down)
+    
     // Predict 4 corners in pixel coordinates
     Eigen::Matrix<Scalar, 8, 1> predictedCorners;
     
@@ -107,11 +153,14 @@ Eigen::Matrix<Scalar, 8, 1> MeasurementSLAMAruco::predictArucoCorners(const Eige
         // Transform corner to world frame (Equation 8)
         Eigen::Vector3<Scalar> rCNn = RnL * rLcL + rLNn;
         
-        // Transform to camera frame (body frame = camera frame)
+        // Transform to body frame (NED coordinates)
         Eigen::Vector3<Scalar> rCBb = Rnb.transpose() * (rCNn - rBNn);
         
+        // CHANGE THIS: Transform from body frame to camera frame
+        Eigen::Vector3<Scalar> rCCc = R_bc.transpose() * rCBb;
+        
         // Project to image coordinates using camera calibration
-        Eigen::Vector2<Scalar> pixelCoords = camera_.vectorToPixel(rCBb);
+        Eigen::Vector2<Scalar> pixelCoords = camera_.vectorToPixel(rCCc);  // Now using camera frame!
         
         // Store in result vector [x1,y1,x2,y2,x3,y3,x4,y4]
         predictedCorners(2*c) = pixelCoords(0);     // x coordinate

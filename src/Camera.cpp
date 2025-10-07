@@ -482,11 +482,11 @@ void Camera::read(const cv::FileNode & node)
     // // Body frame: b1=surge, b2=sway, b3=heave  
     // // Camera frame: c1=x, c2=y, c3=z
     // // Assignment mapping: b1->c3, b2->c1, b3->c2
-    // Eigen::Matrix3d Rbc;
-    // Rbc << 0, 0, 1,  // body_x (surge) -> camera_z
-    //        1, 0, 0,  // body_y (sway) -> camera_x  
-    //        0, 1, 0;  // body_z (heave) -> camera_y
-    // Tbc = Pose<double>(Rbc, Eigen::Vector3d::Zero());
+    Eigen::Matrix3d Rbc;
+    Rbc << 0, 0, 1,  // body_x (surge) -> camera_z
+           1, 0, 0,  // body_y (sway) -> camera_x  
+           0, 1, 0;  // body_z (heave) -> camera_y
+    Tbc = Pose<double>(Rbc, Eigen::Vector3d::Zero());
 
     assert(cameraMatrix.cols == 3);
     assert(cameraMatrix.rows == 3);
