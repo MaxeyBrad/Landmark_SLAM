@@ -191,7 +191,10 @@ void MeasurementSLAMAruco::addLandmarkTagId(int tagId)
     std::cout << "Added landmark for tag " << tagId << " at index " << (landmarkTagIds_.size() - 1) << std::endl;
 }
 
-Eigen::VectorXd MeasurementSLAMAruco::estimateArucoLandmarkPose(const std::vector<cv::Point2f> & corners, const Camera & camera)
+Eigen::VectorXd MeasurementSLAMAruco::estimateArucoLandmarkPose(
+    const std::vector<cv::Point2f> & corners, 
+    const Camera & camera,
+    const Eigen::VectorXd* previousPose)  // ADD THIS PARAMETER
 {
     // Define marker corners in local frame (same as static member)
     std::vector<cv::Point3f> objectPoints;
@@ -202,7 +205,46 @@ Eigen::VectorXd MeasurementSLAMAruco::estimateArucoLandmarkPose(const std::vecto
     
     // Use OpenCV PnP solver to estimate pose
     cv::Mat rvec, tvec;
-    bool success = cv::solvePnP(objectPoints, corners, camera.cameraMatrix, camera.distCoeffs, rvec, tvec);
+    bool success;
+    
+    // ADD TEMPORAL CONSISTENCY LOGIC
+    // ADD TEMPORAL CONSISTENCY LOGIC
+    if (previousPose != nullptr && previousPose->size() == 6) {
+        // Previous pose is in BODY FRAME - need to convert to CAMERA FRAME for solvePnP
+        Eigen::Vector3d prevPos_body = previousPose->segment<3>(0);
+        Eigen::Vector3d prevRPY_body = previousPose->segment<3>(3);
+        
+        // Transform from body frame back to camera frame
+        Eigen::Matrix3d R_bc;
+        R_bc << 0, 0, 1,   // Body X (North) = Camera Z (forward)
+                1, 0, 0,   // Body Y (East) = Camera X (right)
+                0, 1, 0;   // Body Z (Down) = Camera Y (down)
+        
+        // Convert body frame pose back to camera frame for solvePnP initial guess
+        Eigen::Vector3d prevPos_camera = R_bc.transpose() * prevPos_body;
+        Eigen::Matrix3d R_prevBody = rpy2rot(prevRPY_body);
+        Eigen::Matrix3d R_prevCamera = R_bc.transpose() * R_prevBody;
+        Eigen::Vector3d prevRPY_camera = rot2rpy(R_prevCamera);
+        
+        // Convert to OpenCV format (now in camera frame)
+        cv::Mat rvec_guess = (cv::Mat_<double>(3,1) << prevRPY_camera(0), prevRPY_camera(1), prevRPY_camera(2));
+        cv::Mat tvec_guess = (cv::Mat_<double>(3,1) << prevPos_camera(0), prevPos_camera(1), prevPos_camera(2));
+        
+        // Use initial guess with iterative solver
+        success = cv::solvePnP(objectPoints, corners, camera.cameraMatrix, camera.distCoeffs, 
+                            rvec_guess, tvec_guess, true, cv::SOLVEPNP_ITERATIVE);
+        rvec = rvec_guess;
+        tvec = tvec_guess;
+        
+        std::cout << "Used temporal consistency for pose estimation" << std::endl;
+    
+    } else {
+        // No previous pose available - use default solver
+        success = cv::solvePnP(objectPoints, corners, camera.cameraMatrix, camera.distCoeffs, 
+                              rvec, tvec, false, cv::SOLVEPNP_ITERATIVE);
+        std::cout << "No previous pose - using default solver" << std::endl;
+    }
+    // END TEMPORAL CONSISTENCY LOGIC
     
     if (!success) {
         std::cerr << "Warning: Failed to estimate ArUco pose via solvePnP" << std::endl;
@@ -221,12 +263,61 @@ Eigen::VectorXd MeasurementSLAMAruco::estimateArucoLandmarkPose(const std::vecto
     Eigen::Vector3d orientation = rot2rpy(R);
     
     // Return 6DOF pose [position, orientation]
+    // ADD COORDINATE TRANSFORMATION (same as in predictArucoCorners)
+    Eigen::Matrix3d R_bc;
+    R_bc << 0, 0, 1,   // Body X (North) = Camera Z (forward)
+            1, 0, 0,   // Body Y (East) = Camera X (right)  
+            0, 1, 0;   // Body Z (Down) = Camera Y (down)
+
+    // Transform from camera frame to body frame
+    Eigen::Vector3d position_body = R_bc * position;
+    Eigen::Matrix3d R_body = R_bc * R;
+    Eigen::Vector3d orientation_body = rot2rpy(R_body);
+
+    // Return 6DOF pose [position, orientation] in body frame
     Eigen::VectorXd pose(6);
-    pose.segment<3>(0) = position;
-    pose.segment<3>(3) = orientation;
+    pose.segment<3>(0) = position_body;      // Use transformed position
+    pose.segment<3>(3) = orientation_body;   // Use transformed orientation
     
     return pose;
 }
+
+// Eigen::VectorXd MeasurementSLAMAruco::estimateArucoLandmarkPose(const std::vector<cv::Point2f> & corners, const Camera & camera)
+// {
+//     // Define marker corners in local frame (same as static member)
+//     std::vector<cv::Point3f> objectPoints;
+//     objectPoints.push_back(cv::Point3f(-MARKER_SIZE/2,  MARKER_SIZE/2, 0));  // top-left
+//     objectPoints.push_back(cv::Point3f( MARKER_SIZE/2,  MARKER_SIZE/2, 0));  // top-right
+//     objectPoints.push_back(cv::Point3f( MARKER_SIZE/2, -MARKER_SIZE/2, 0));  // bottom-right
+//     objectPoints.push_back(cv::Point3f(-MARKER_SIZE/2, -MARKER_SIZE/2, 0));  // bottom-left
+    
+//     // Use OpenCV PnP solver to estimate pose
+//     cv::Mat rvec, tvec;
+//     bool success = cv::solvePnP(objectPoints, corners, camera.cameraMatrix, camera.distCoeffs, rvec, tvec);
+    
+//     if (!success) {
+//         std::cerr << "Warning: Failed to estimate ArUco pose via solvePnP" << std::endl;
+//         return Eigen::VectorXd::Zero(6);  // Return zero pose
+//     }
+    
+//     // Convert OpenCV results to our format
+//     cv::Mat rotationMatrix;
+//     cv::Rodrigues(rvec, rotationMatrix);
+    
+//     // Convert to Eigen
+//     Eigen::Matrix3d R;
+//     cv::cv2eigen(rotationMatrix, R);
+    
+//     Eigen::Vector3d position(tvec.at<double>(0), tvec.at<double>(1), tvec.at<double>(2));
+//     Eigen::Vector3d orientation = rot2rpy(R);
+    
+//     // Return 6DOF pose [position, orientation]
+//     Eigen::VectorXd pose(6);
+//     pose.segment<3>(0) = position;
+//     pose.segment<3>(3) = orientation;
+    
+//     return pose;
+// }
 
 // void MeasurementSLAMAruco::initializeNewLandmark(SystemSLAM & system, int tagId, const std::vector<cv::Point2f> & corners, const Camera & camera)
 // {
@@ -284,215 +375,285 @@ void MeasurementSLAMAruco::initializeNewLandmark(
 {
     std::cout << "\n=== Initializing Landmark for Tag " << tagId << " ===" << std::endl;
     
-    // ═══════════════════════════════════════════════════════════════
-    // STEP 1: Estimate Tag Pose in CAMERA FRAME using PnP
-    // ═══════════════════════════════════════════════════════════════
-    
-    // Define the 4 corners of the marker in its LOCAL frame
-    // Marker is centered at origin, lying in XY plane (Z=0)
-    // Corner order: top-left, top-right, bottom-right, bottom-left
-    std::vector<cv::Point3f> objectPoints;
-    double half = MARKER_SIZE / 2.0;  // 0.083 meters
-    objectPoints.push_back(cv::Point3f(-half,  half, 0.0));  // Top-left
-    objectPoints.push_back(cv::Point3f( half,  half, 0.0));  // Top-right
-    objectPoints.push_back(cv::Point3f( half, -half, 0.0));  // Bottom-right
-    objectPoints.push_back(cv::Point3f(-half, -half, 0.0));  // Bottom-left
-    
-    // Solve PnP to get tag pose relative to camera
-    cv::Vec3d rvec, tvec;
-    bool success = cv::solvePnP(
-        objectPoints,           // 3D points in marker frame
-        corners,                // 2D points in image
-        camera.cameraMatrix,    // Camera intrinsics
-        camera.distCoeffs,      // Distortion coefficients
-        rvec,                   // OUTPUT: Rotation (Rodrigues)
-        tvec,                   // OUTPUT: Translation
-        false,                  // Don't use extrinsic guess
-        cv::SOLVEPNP_ITERATIVE  // Algorithm
-    );
-    
-    if (!success) {
-        std::cerr << "ERROR: solvePnP failed for tag " << tagId << std::endl;
+    // Use the fixed estimateArucoLandmarkPose function (includes temporal consistency and coordinate transforms)
+    Eigen::VectorXd landmarkPose = estimateArucoLandmarkPose(corners, camera, nullptr);
+
+    if (landmarkPose.norm() == 0.0) {
+        std::cerr << "ERROR: Failed to estimate pose for tag " << tagId << std::endl;
         return;
     }
-    
-    // Convert rotation vector to rotation matrix
-    cv::Mat R_cL_cv;
-    cv::Rodrigues(rvec, R_cL_cv);
-    
-    // Convert OpenCV matrices to Eigen
-    Eigen::Matrix3d R_cL;  // Rotation from landmark frame to camera frame
-    Eigen::Vector3d r_L_c; // Landmark position in camera frame
-    
-    cv::cv2eigen(R_cL_cv, R_cL);
-    r_L_c << tvec[0], tvec[1], tvec[2];
-    
-    std::cout << "PnP Result (in camera frame):" << std::endl;
-    std::cout << "  Position: [" << r_L_c.transpose() << "] meters" << std::endl;
-    std::cout << "  Distance: " << r_L_c.norm() << " meters" << std::endl;
-    std::cout << "  Rotation det: " << R_cL.determinant() << " (should be 1.0)" << std::endl;
 
-    // Right after PnP
-    std::cout << "=== Camera Frame Convention Check ===" << std::endl;
-    std::cout << "r_L_c (marker in camera): [" << r_L_c.transpose() << "]" << std::endl;
-    std::cout << "  X (right?): " << r_L_c(0) << std::endl;
-    std::cout << "  Y (down?):  " << r_L_c(1) << std::endl;
-    std::cout << "  Z (forward?): " << r_L_c(2) << std::endl;
-
-    // Check if Z is positive and points forward
-    if (r_L_c(2) < 0) {
-        std::cerr << "ERROR: Tag is behind camera! Frame convention wrong!" << std::endl;
-    }
+    // Extract position and orientation (already in body frame, then transformed to world frame)
+    Eigen::Vector3d r_L_b = landmarkPose.segment<3>(0);
+    Eigen::Vector3d theta_Lb = landmarkPose.segment<3>(3);
     
-    // Sanity checks
-    if (r_L_c(2) <= 0.0) {
-        std::cerr << "WARNING: Tag is behind camera (z=" << r_L_c(2) << ")!" << std::endl;
-    }
-    if (r_L_c.norm() < 0.2 || r_L_c.norm() > 20.0) {
-        std::cerr << "WARNING: Suspicious distance: " << r_L_c.norm() << "m" << std::endl;
-    }
+    std::cout << "Estimated landmark pose (body frame):" << std::endl;
+    std::cout << "  Position: [" << r_L_b.transpose() << "] meters" << std::endl;
+    std::cout << "  Orientation (RPY): [" << theta_Lb.transpose() << "] radians" << std::endl;
     
-    
-    // ═══════════════════════════════════════════════════════════════
-    // STEP 2: Get Current Body Pose from SLAM State
-    // ═══════════════════════════════════════════════════════════════
-    
+    // Get current body pose from SLAM state  
     Eigen::VectorXd currentState = system.density.mean();
-    
-    // Extract body position in world frame (NED coordinates)
     Eigen::Vector3d r_B_n = currentState.segment<3>(6);
-    
-    // Extract body orientation in world frame (RPY Euler angles)
     Eigen::Vector3d theta_bn = currentState.segment<3>(9);
-    
-    // Convert body orientation to rotation matrix
-    // R_nb: rotation matrix from body frame to world frame
     Eigen::Matrix3d R_nb = rpy2rot(theta_bn);
     
-    std::cout << "Current Body Pose (in world frame):" << std::endl;
-    std::cout << "  Position: [" << r_B_n.transpose() << "] meters (NED)" << std::endl;
-    std::cout << "  Orientation (RPY): [" << theta_bn.transpose() << "] radians" << std::endl;
-    
-    
-    // ═══════════════════════════════════════════════════════════════
-    // STEP 3: Transform Landmark from CAMERA FRAME to WORLD FRAME
-    // ═══════════════════════════════════════════════════════════════
-    // Define rotation from NED body frame to camera frame (same as in prediction)
-    Eigen::Matrix3d R_bc;
-    R_bc << 0, 0, 1,   // Body X (North) = Camera Z (forward)
-            1, 0, 0,   // Body Y (East) = Camera X (right)
-            0, 1, 0;   // Body Z (Down) = Camera Y (down)
-
-    // Transform landmark from camera frame to body frame
-    Eigen::Vector3d r_L_b = R_bc * r_L_c;
-    Eigen::Matrix3d R_bL = R_bc * R_cL;
-
-    // Transform landmark position to world frame
-    // r_L^n = r_B^n + R_n^b * r_L^b
+    // Transform landmark pose to world frame
     Eigen::Vector3d r_L_n = r_B_n + R_nb * r_L_b;
-
-    // Transform landmark orientation to world frame
-    // R_n^L = R_n^b * R_b^L
-    Eigen::Matrix3d R_nL = R_nb * R_bL;
-
-
-    // CRITICAL ASSUMPTION: Body frame = Camera frame (per assignment)
-    // // Therefore: r_B_n = r_C_n  and  R_nb = R_nc
-    
-    // // Transform landmark position to world frame
-    // // r_L^n = r_B^n + R_n^b * r_L^c
-    // Eigen::Vector3d r_L_n = r_B_n + R_nb * r_L_c;
-    
-    // // Transform landmark orientation to world frame
-    // // R_n^L = R_n^b * R_c^L
-    // Eigen::Matrix3d R_nL = R_nb * R_cL;
-    
-    // Convert rotation matrix to Euler angles
+    Eigen::Matrix3d R_Lb = rpy2rot(theta_Lb);
+    Eigen::Matrix3d R_nL = R_nb * R_Lb;
     Eigen::Vector3d theta_Ln = rot2rpy(R_nL);
     
-    std::cout << "Landmark Pose (in world frame):" << std::endl;
+    std::cout << "Landmark pose (world frame):" << std::endl;
     std::cout << "  Position: [" << r_L_n.transpose() << "] meters (NED)" << std::endl;
     std::cout << "  Orientation (RPY): [" << theta_Ln.transpose() << "] radians" << std::endl;
     
-    // Verification: transform back to camera frame
-    // Verification: transform back to camera frame
-    Eigen::Vector3d r_L_b_check = R_nb.transpose() * (r_L_n - r_B_n);
-    Eigen::Vector3d r_L_c_check = R_bc.transpose() * r_L_b_check;
-    double error = (r_L_c_check - r_L_c).norm();
-    std::cout << "Round-trip verification error: " << error << " meters (should be ~0)" << std::endl;
-    
-    if (error > 0.01) {
-        std::cerr << "ERROR: Coordinate transformation is incorrect!" << std::endl;
-        std::cerr << "  Original r_L_c:   [" << r_L_c.transpose() << "]" << std::endl;
-        std::cerr << "  Round-trip r_L_c: [" << r_L_c_check.transpose() << "]" << std::endl;
-        return;
-    }
-    
-    
-    // ═══════════════════════════════════════════════════════════════
-    // STEP 4: Expand State Vector to Include New Landmark
-    // ═══════════════════════════════════════════════════════════════
-    
-    // Get current state dimension
+    // Expand state vector
     int oldDim = currentState.size();
-    int newDim = oldDim + 6;  // Add 6-DOF landmark (3 pos + 3 orient)
+    int newDim = oldDim + 6;
     
-    // Create expanded state vector
     Eigen::VectorXd newState(newDim);
-    newState.head(oldDim) = currentState;  // Copy existing state
-    newState.segment<3>(oldDim) = r_L_n;        // Landmark position
-    newState.segment<3>(oldDim + 3) = theta_Ln; // Landmark orientation
+    newState.head(oldDim) = currentState;
+    newState.segment<3>(oldDim) = r_L_n;
+    newState.segment<3>(oldDim + 3) = theta_Ln;
     
-    std::cout << "State expansion:" << std::endl;
-    std::cout << "  Old dimension: " << oldDim << std::endl;
-    std::cout << "  New dimension: " << newDim << std::endl;
-    std::cout << "  Landmark index: " << oldDim << std::endl;
-    
-    
-    // ═══════════════════════════════════════════════════════════════
-    // STEP 5: Expand Covariance Matrix (Square Root Form)
-    // ═══════════════════════════════════════════════════════════════
-    
+    // Expand covariance matrix
     Eigen::MatrixXd currentSqrtCov = system.density.sqrtCov();
     Eigen::MatrixXd newSqrtCov = Eigen::MatrixXd::Zero(newDim, newDim);
-    
-    // Copy existing covariance
     newSqrtCov.topLeftCorner(oldDim, oldDim) = currentSqrtCov;
     
-    // Set initial uncertainty for new landmark
-    // These values reflect our confidence in the PnP estimate
-    double positionUncertainty = 0.5;      // 50cm position uncertainty
-    double orientationUncertainty = 0.5;   // ~30° orientation uncertainty
+    double positionUncertainty = 0.5;
+    double orientationUncertainty = 0.5;
     
-    // Fill in diagonal elements for new landmark
     for (int i = 0; i < 3; ++i) {
-        newSqrtCov(oldDim + i, oldDim + i) = positionUncertainty;         // Position
-        newSqrtCov(oldDim + 3 + i, oldDim + 3 + i) = orientationUncertainty; // Orientation
+        newSqrtCov(oldDim + i, oldDim + i) = positionUncertainty;
+        newSqrtCov(oldDim + 3 + i, oldDim + 3 + i) = orientationUncertainty;
     }
     
-    std::cout << "Initial uncertainty:" << std::endl;
-    std::cout << "  Position: " << positionUncertainty << " meters (sqrt)" << std::endl;
-    std::cout << "  Orientation: " << orientationUncertainty << " radians (sqrt)" << std::endl;
-    
-    
-    // ═══════════════════════════════════════════════════════════════
-    // STEP 6: Update System Density
-    // ═══════════════════════════════════════════════════════════════
-    
+    // Update system
     system.density = GaussianInfo<double>::fromSqrtMoment(newState, newSqrtCov);
-    
-    
-    // ═══════════════════════════════════════════════════════════════
-    // STEP 7: Track Tag ID for Data Association
-    // ═══════════════════════════════════════════════════════════════
-    
     addLandmarkTagId(tagId);
     
     std::cout << "SUCCESS: Initialized landmark for tag " << tagId << std::endl;
-    std::cout << "  Landmark index: " << (landmarkTagIds_.size() - 1) << std::endl;
-    std::cout << "  Total landmarks: " << landmarkTagIds_.size() << std::endl;
     std::cout << "=== Initialization Complete ===" << std::endl;
 }
+
+// void MeasurementSLAMAruco::initializeNewLandmark(
+//     SystemSLAM & system, 
+//     int tagId, 
+//     const std::vector<cv::Point2f> & corners, 
+//     const Camera & camera)
+// {
+//     std::cout << "\n=== Initializing Landmark for Tag " << tagId << " ===" << std::endl;
+    
+//     // ═══════════════════════════════════════════════════════════════
+//     // STEP 1: Estimate Tag Pose in CAMERA FRAME using PnP
+//     // ═══════════════════════════════════════════════════════════════
+    
+//     // Define the 4 corners of the marker in its LOCAL frame
+//     // Marker is centered at origin, lying in XY plane (Z=0)
+//     // Corner order: top-left, top-right, bottom-right, bottom-left
+//     std::vector<cv::Point3f> objectPoints;
+//     double half = MARKER_SIZE / 2.0;  // 0.083 meters
+//     objectPoints.push_back(cv::Point3f(-half,  half, 0.0));  // Top-left
+//     objectPoints.push_back(cv::Point3f( half,  half, 0.0));  // Top-right
+//     objectPoints.push_back(cv::Point3f( half, -half, 0.0));  // Bottom-right
+//     objectPoints.push_back(cv::Point3f(-half, -half, 0.0));  // Bottom-left
+    
+//     // Solve PnP to get tag pose relative to camera
+//     cv::Vec3d rvec, tvec;
+//     bool success = cv::solvePnP(
+//         objectPoints,           // 3D points in marker frame
+//         corners,                // 2D points in image
+//         camera.cameraMatrix,    // Camera intrinsics
+//         camera.distCoeffs,      // Distortion coefficients
+//         rvec,                   // OUTPUT: Rotation (Rodrigues)
+//         tvec,                   // OUTPUT: Translation
+//         false,                  // Don't use extrinsic guess
+//         cv::SOLVEPNP_ITERATIVE  // Algorithm
+//     );
+    
+//     if (!success) {
+//         std::cerr << "ERROR: solvePnP failed for tag " << tagId << std::endl;
+//         return;
+//     }
+    
+//     // Convert rotation vector to rotation matrix
+//     cv::Mat R_cL_cv;
+//     cv::Rodrigues(rvec, R_cL_cv);
+    
+//     // Convert OpenCV matrices to Eigen
+//     Eigen::Matrix3d R_cL;  // Rotation from landmark frame to camera frame
+//     Eigen::Vector3d r_L_c; // Landmark position in camera frame
+    
+//     cv::cv2eigen(R_cL_cv, R_cL);
+//     r_L_c << tvec[0], tvec[1], tvec[2];
+    
+//     std::cout << "PnP Result (in camera frame):" << std::endl;
+//     std::cout << "  Position: [" << r_L_c.transpose() << "] meters" << std::endl;
+//     std::cout << "  Distance: " << r_L_c.norm() << " meters" << std::endl;
+//     std::cout << "  Rotation det: " << R_cL.determinant() << " (should be 1.0)" << std::endl;
+
+//     // Right after PnP
+//     std::cout << "=== Camera Frame Convention Check ===" << std::endl;
+//     std::cout << "r_L_c (marker in camera): [" << r_L_c.transpose() << "]" << std::endl;
+//     std::cout << "  X (right?): " << r_L_c(0) << std::endl;
+//     std::cout << "  Y (down?):  " << r_L_c(1) << std::endl;
+//     std::cout << "  Z (forward?): " << r_L_c(2) << std::endl;
+
+//     // Check if Z is positive and points forward
+//     if (r_L_c(2) < 0) {
+//         std::cerr << "ERROR: Tag is behind camera! Frame convention wrong!" << std::endl;
+//     }
+    
+//     // Sanity checks
+//     if (r_L_c(2) <= 0.0) {
+//         std::cerr << "WARNING: Tag is behind camera (z=" << r_L_c(2) << ")!" << std::endl;
+//     }
+//     if (r_L_c.norm() < 0.2 || r_L_c.norm() > 20.0) {
+//         std::cerr << "WARNING: Suspicious distance: " << r_L_c.norm() << "m" << std::endl;
+//     }
+    
+    
+//     // ═══════════════════════════════════════════════════════════════
+//     // STEP 2: Get Current Body Pose from SLAM State
+//     // ═══════════════════════════════════════════════════════════════
+    
+//     Eigen::VectorXd currentState = system.density.mean();
+    
+//     // Extract body position in world frame (NED coordinates)
+//     Eigen::Vector3d r_B_n = currentState.segment<3>(6);
+    
+//     // Extract body orientation in world frame (RPY Euler angles)
+//     Eigen::Vector3d theta_bn = currentState.segment<3>(9);
+    
+//     // Convert body orientation to rotation matrix
+//     // R_nb: rotation matrix from body frame to world frame
+//     Eigen::Matrix3d R_nb = rpy2rot(theta_bn);
+    
+//     std::cout << "Current Body Pose (in world frame):" << std::endl;
+//     std::cout << "  Position: [" << r_B_n.transpose() << "] meters (NED)" << std::endl;
+//     std::cout << "  Orientation (RPY): [" << theta_bn.transpose() << "] radians" << std::endl;
+    
+    
+//     // ═══════════════════════════════════════════════════════════════
+//     // STEP 3: Transform Landmark from CAMERA FRAME to WORLD FRAME
+//     // ═══════════════════════════════════════════════════════════════
+//     // Define rotation from NED body frame to camera frame (same as in prediction)
+//     Eigen::Matrix3d R_bc;
+//     R_bc << 0, 0, 1,   // Body X (North) = Camera Z (forward)
+//             1, 0, 0,   // Body Y (East) = Camera X (right)
+//             0, 1, 0;   // Body Z (Down) = Camera Y (down)
+
+//     // Transform landmark from camera frame to body frame
+//     Eigen::Vector3d r_L_b = R_bc * r_L_c;
+//     Eigen::Matrix3d R_bL = R_bc * R_cL;
+
+//     // Transform landmark position to world frame
+//     // r_L^n = r_B^n + R_n^b * r_L^b
+//     Eigen::Vector3d r_L_n = r_B_n + R_nb * r_L_b;
+
+//     // Transform landmark orientation to world frame
+//     // R_n^L = R_n^b * R_b^L
+//     Eigen::Matrix3d R_nL = R_nb * R_bL;
+
+
+//     // CRITICAL ASSUMPTION: Body frame = Camera frame (per assignment)
+//     // // Therefore: r_B_n = r_C_n  and  R_nb = R_nc
+    
+//     // // Transform landmark position to world frame
+//     // // r_L^n = r_B^n + R_n^b * r_L^c
+//     // Eigen::Vector3d r_L_n = r_B_n + R_nb * r_L_c;
+    
+//     // // Transform landmark orientation to world frame
+//     // // R_n^L = R_n^b * R_c^L
+//     // Eigen::Matrix3d R_nL = R_nb * R_cL;
+    
+//     // Convert rotation matrix to Euler angles
+//     Eigen::Vector3d theta_Ln = rot2rpy(R_nL);
+    
+//     std::cout << "Landmark Pose (in world frame):" << std::endl;
+//     std::cout << "  Position: [" << r_L_n.transpose() << "] meters (NED)" << std::endl;
+//     std::cout << "  Orientation (RPY): [" << theta_Ln.transpose() << "] radians" << std::endl;
+    
+//     // Verification: transform back to camera frame
+//     // Verification: transform back to camera frame
+//     Eigen::Vector3d r_L_b_check = R_nb.transpose() * (r_L_n - r_B_n);
+//     Eigen::Vector3d r_L_c_check = R_bc.transpose() * r_L_b_check;
+//     double error = (r_L_c_check - r_L_c).norm();
+//     std::cout << "Round-trip verification error: " << error << " meters (should be ~0)" << std::endl;
+    
+//     if (error > 0.01) {
+//         std::cerr << "ERROR: Coordinate transformation is incorrect!" << std::endl;
+//         std::cerr << "  Original r_L_c:   [" << r_L_c.transpose() << "]" << std::endl;
+//         std::cerr << "  Round-trip r_L_c: [" << r_L_c_check.transpose() << "]" << std::endl;
+//         return;
+//     }
+    
+    
+//     // ═══════════════════════════════════════════════════════════════
+//     // STEP 4: Expand State Vector to Include New Landmark
+//     // ═══════════════════════════════════════════════════════════════
+    
+//     // Get current state dimension
+//     int oldDim = currentState.size();
+//     int newDim = oldDim + 6;  // Add 6-DOF landmark (3 pos + 3 orient)
+    
+//     // Create expanded state vector
+//     Eigen::VectorXd newState(newDim);
+//     newState.head(oldDim) = currentState;  // Copy existing state
+//     newState.segment<3>(oldDim) = r_L_n;        // Landmark position
+//     newState.segment<3>(oldDim + 3) = theta_Ln; // Landmark orientation
+    
+//     std::cout << "State expansion:" << std::endl;
+//     std::cout << "  Old dimension: " << oldDim << std::endl;
+//     std::cout << "  New dimension: " << newDim << std::endl;
+//     std::cout << "  Landmark index: " << oldDim << std::endl;
+    
+    
+//     // ═══════════════════════════════════════════════════════════════
+//     // STEP 5: Expand Covariance Matrix (Square Root Form)
+//     // ═══════════════════════════════════════════════════════════════
+    
+//     Eigen::MatrixXd currentSqrtCov = system.density.sqrtCov();
+//     Eigen::MatrixXd newSqrtCov = Eigen::MatrixXd::Zero(newDim, newDim);
+    
+//     // Copy existing covariance
+//     newSqrtCov.topLeftCorner(oldDim, oldDim) = currentSqrtCov;
+    
+//     // Set initial uncertainty for new landmark
+//     // These values reflect our confidence in the PnP estimate
+//     double positionUncertainty = 0.5;      // 50cm position uncertainty
+//     double orientationUncertainty = 0.5;   // ~30° orientation uncertainty
+    
+//     // Fill in diagonal elements for new landmark
+//     for (int i = 0; i < 3; ++i) {
+//         newSqrtCov(oldDim + i, oldDim + i) = positionUncertainty;         // Position
+//         newSqrtCov(oldDim + 3 + i, oldDim + 3 + i) = orientationUncertainty; // Orientation
+//     }
+    
+//     std::cout << "Initial uncertainty:" << std::endl;
+//     std::cout << "  Position: " << positionUncertainty << " meters (sqrt)" << std::endl;
+//     std::cout << "  Orientation: " << orientationUncertainty << " radians (sqrt)" << std::endl;
+    
+    
+//     // ═══════════════════════════════════════════════════════════════
+//     // STEP 6: Update System Density
+//     // ═══════════════════════════════════════════════════════════════
+    
+//     system.density = GaussianInfo<double>::fromSqrtMoment(newState, newSqrtCov);
+    
+    
+//     // ═══════════════════════════════════════════════════════════════
+//     // STEP 7: Track Tag ID for Data Association
+//     // ═══════════════════════════════════════════════════════════════
+    
+//     addLandmarkTagId(tagId);
+    
+//     std::cout << "SUCCESS: Initialized landmark for tag " << tagId << std::endl;
+//     std::cout << "  Landmark index: " << (landmarkTagIds_.size() - 1) << std::endl;
+//     std::cout << "  Total landmarks: " << landmarkTagIds_.size() << std::endl;
+//     std::cout << "=== Initialization Complete ===" << std::endl;
+// }
 
 Eigen::VectorXd MeasurementSLAMAruco::simulate(const Eigen::VectorXd & x, const SystemEstimator & system) const
 {

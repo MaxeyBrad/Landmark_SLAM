@@ -175,13 +175,54 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
         if (!ids.empty()) {
             cv::aruco::drawDetectedMarkers(imgProcessed, corners, ids);  // Green outline and ID
             
-            // Draw pose axes for each detected tag
-            std::vector<cv::Vec3d> rvecs, tvecs;
-            cv::aruco::estimatePoseSingleMarkers(corners, 0.166, camera.cameraMatrix, camera.distCoeffs, rvecs, tvecs);
+        // Draw pose axes for each detected tag using fixed pose estimation
+        std::vector<cv::Vec3d> rvecs, tvecs;
+        static std::map<int, Eigen::VectorXd> previousPoses; // Store previous poses for temporal consistency
+
+        for (size_t i = 0; i < ids.size(); ++i) {
+            int tagId = ids[i];
             
-            for (size_t i = 0; i < ids.size(); ++i) {
-                cv::drawFrameAxes(imgProcessed, camera.cameraMatrix, camera.distCoeffs, rvecs[i], tvecs[i], 0.1);
+            // Get previous pose for temporal consistency (if available)
+            Eigen::VectorXd* prevPose = nullptr;
+            auto it = previousPoses.find(tagId);
+            if (it != previousPoses.end()) {
+                prevPose = &(it->second);
             }
+            
+            // Use your fixed pose estimation function
+            Eigen::VectorXd pose = MeasurementSLAMAruco::estimateArucoLandmarkPose(corners[i], camera, prevPose);
+            
+            if (pose.norm() > 0.0) {  // Valid pose estimated
+                // Store for next frame's temporal consistency
+                previousPoses[tagId] = pose;
+                
+                // Convert back to camera frame for visualization (OpenCV expects camera frame)
+                Eigen::Matrix3d R_bc;
+                R_bc << 0, 0, 1,   // Body X (North) = Camera Z (forward)
+                        1, 0, 0,   // Body Y (East) = Camera X (right)
+                        0, 1, 0;   // Body Z (Down) = Camera Y (down)
+                
+                // Transform from body frame back to camera frame
+                Eigen::Vector3d pos_body = pose.segment<3>(0);
+                Eigen::Vector3d rpy_body = pose.segment<3>(3);
+                
+                Eigen::Vector3d pos_camera = R_bc.transpose() * pos_body;
+                Eigen::Matrix3d R_body = rpy2rot(rpy_body);
+                Eigen::Matrix3d R_camera = R_bc.transpose() * R_body;
+                
+                // Convert rotation matrix to Rodrigues vector (what OpenCV expects)
+                cv::Mat R_cv;
+                cv::eigen2cv(R_camera, R_cv);
+                cv::Mat rvec_mat;
+                cv::Rodrigues(R_cv, rvec_mat);
+                cv::Vec3d rvec(rvec_mat.at<double>(0), rvec_mat.at<double>(1), rvec_mat.at<double>(2));
+                
+                cv::Vec3d tvec(pos_camera(0), pos_camera(1), pos_camera(2));
+                
+                // Draw stable axes
+                cv::drawFrameAxes(imgProcessed, camera.cameraMatrix, camera.distCoeffs, rvec, tvec, 0.1);
+            }
+        }
             
             // SLAM processing for ArUco scenario
             std::cout << "Checking SLAM conditions: scenario=" << scenario << ", slamSystem=" << (slamSystem ? "valid" : "null") << std::endl;

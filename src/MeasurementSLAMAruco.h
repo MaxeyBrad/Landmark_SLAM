@@ -54,7 +54,8 @@ public:
     Scalar logLikelihoodTemplate(const Eigen::VectorX<Scalar> & x, const SystemEstimator & system) const;
     
     // Landmark initialization
-    static Eigen::VectorXd estimateArucoLandmarkPose(const std::vector<cv::Point2f> & corners, const Camera & camera);
+    static Eigen::VectorXd estimateArucoLandmarkPose(const std::vector<cv::Point2f> & corners, const Camera & camera, const Eigen::VectorXd* previousPose = nullptr);
+    // static Eigen::VectorXd estimateArucoLandmarkPose(const std::vector<cv::Point2f> & corners, const Camera & camera);
     static void initializeNewLandmark(SystemSLAM & system, int tagId, const std::vector<cv::Point2f> & corners, const Camera & camera);
     
     // Visualization support

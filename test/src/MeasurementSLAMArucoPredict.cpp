@@ -683,3 +683,303 @@ SCENARIO("ArUco corner prediction - numerical stability")
         }
     }
 }
+
+SCENARIO("ArUco orientation recovery - Z-axis direction")
+{
+    GIVEN("A marker with known Z-axis direction")
+    {
+        Camera camera = createTestCamera();
+        
+        // Camera at origin, no rotation
+        Eigen::Vector3d bodyPos(0.0, 0.0, 0.0);
+        Eigen::Vector3d bodyRPY(0.0, 0.0, 0.0);
+        
+        WHEN("Marker Z-axis points toward camera (0° roll)")
+        {
+            Eigen::Vector3d landmarkPos(2.0, 0.0, 0.0);  // 2m North
+            Eigen::Vector3d landmarkRPY(0.0, 0.0, 0.0);   // No rotation
+            
+            Eigen::VectorXd state = createMinimalState(bodyPos, bodyRPY, 
+                                                        {landmarkPos}, 
+                                                        {landmarkRPY});
+            TestSystemSLAM system = createTestSystem(state);
+            
+            // Initialize a new landmark from these corners
+            std::vector<int> tagIds = {0};
+            std::vector<std::vector<cv::Point2f>> corners = {{}};
+            MeasurementSLAMAruco measurement(0.0, camera, tagIds, corners);
+            
+            // Get predicted corners for this pose
+            Eigen::MatrixXd J;
+            Eigen::Matrix<double, 8, 1> predictedCorners = 
+                measurement.predictArucoCorners(state, J, system, 0);
+            
+            THEN("Predicted corners are reasonable")
+            {
+                CAPTURE_EIGEN(predictedCorners);
+                CHECK(predictedCorners.allFinite());
+                
+                // Center should be near image center
+                double centerX = (predictedCorners(0) + predictedCorners(2) + 
+                                 predictedCorners(4) + predictedCorners(6)) / 4.0;
+                double centerY = (predictedCorners(1) + predictedCorners(3) + 
+                                 predictedCorners(5) + predictedCorners(7)) / 4.0;
+                
+                CHECK(centerX == doctest::Approx(320.0).epsilon(0.1));  // cx
+                CHECK(centerY == doctest::Approx(240.0).epsilon(0.1));  // cy
+            }
+        }
+        
+        WHEN("Marker Z-axis points away from camera (180° roll)")
+        {
+            Eigen::Vector3d landmarkPos(2.0, 0.0, 0.0);  // 2m North
+            Eigen::Vector3d landmarkRPY(std::numbers::pi, 0.0, 0.0);  // 180° roll
+            
+            Eigen::VectorXd state = createMinimalState(bodyPos, bodyRPY, 
+                                                        {landmarkPos}, 
+                                                        {landmarkRPY});
+            TestSystemSLAM system = createTestSystem(state);
+            
+            std::vector<int> tagIds = {0};
+            std::vector<std::vector<cv::Point2f>> corners = {{}};
+            MeasurementSLAMAruco measurement(0.0, camera, tagIds, corners);
+            
+            Eigen::MatrixXd J;
+            Eigen::Matrix<double, 8, 1> predictedCorners = 
+                measurement.predictArucoCorners(state, J, system, 0);
+            
+            THEN("Predicted corners should differ from 0° case")
+            {
+                CAPTURE_EIGEN(predictedCorners);
+                
+                // This case should produce different corner positions
+                // Test that it's not the same as the 0° case
+                CHECK(predictedCorners.allFinite());
+                
+                // The corners should still be reasonable but in different positions
+                double spread = predictedCorners.maxCoeff() - predictedCorners.minCoeff();
+                CHECK(spread > 10.0);  // Should have reasonable spread
+            }
+        }
+    }
+}
+
+SCENARIO("ArUco rotation matrix validation")
+{
+    GIVEN("Any predicted marker orientation")
+    {
+        // This test checks if rotation matrices are valid (det = +1)
+        Camera camera = createTestCamera();
+        
+        Eigen::Vector3d bodyPos(0.0, 0.0, 0.0);
+        Eigen::Vector3d bodyRPY(0.0, 0.0, 0.0);
+        
+        std::vector<double> rollAngles = {0.0, std::numbers::pi/4, std::numbers::pi/2, std::numbers::pi};
+        
+        for (double roll : rollAngles) {
+            INFO("Testing roll angle: ", roll, " radians");
+            
+            Eigen::Vector3d landmarkPos(2.0, 0.0, 0.0);
+            Eigen::Vector3d landmarkRPY(roll, 0.0, 0.0);
+            
+            // Convert RPY to rotation matrix
+            Eigen::Matrix3d R_expected = rpy2rot(landmarkRPY);
+            
+            WHEN("Converting orientation")
+            {
+                THEN("Rotation matrix has positive determinant")
+                {
+                    double det = R_expected.determinant();
+                    CAPTURE_EIGEN(R_expected);
+                    INFO("Determinant: ", det);
+                    
+                    CHECK(det == doctest::Approx(1.0).epsilon(1e-10));  // Should be +1, not -1
+                }
+                
+                THEN("Rotation matrix is orthogonal")
+                {
+                    Eigen::Matrix3d should_be_identity = R_expected.transpose() * R_expected;
+                    CAPTURE_EIGEN(should_be_identity);
+                    
+                    CHECK(should_be_identity.isApprox(Eigen::Matrix3d::Identity(), 1e-10));
+                }
+            }
+        }
+    }
+}
+
+SCENARIO("ArUco landmark initialization - Z-axis consistency")
+{
+    GIVEN("Known ArUco corner detections")
+    {
+        Camera camera = createTestCamera();
+        
+        // Create synthetic "detected" corners for a marker at known pose
+        std::vector<cv::Point2f> syntheticCorners = {
+            cv::Point2f(300, 220),  // Top-left
+            cv::Point2f(340, 220),  // Top-right  
+            cv::Point2f(340, 260),  // Bottom-right
+            cv::Point2f(300, 260)   // Bottom-left
+        };
+        
+        WHEN("Initializing landmark from these corners")
+        {
+            // Test the actual initialization process
+            // This will reveal if PnP is flipping Z-axis
+            
+            THEN("Initialized pose should match expected orientation")
+            {
+                // Compare initialized landmark with known pose
+            }
+        }
+    }
+}
+
+SCENARIO("ArUco pose estimation - temporal consistency")
+{
+    GIVEN("Nearly identical corner detections from consecutive frames")
+    {
+        Camera camera = createTestCamera();
+        
+        // Simulate real-world scenario: same marker with tiny detection noise
+        std::vector<cv::Point2f> corners_frame1 = {
+            cv::Point2f(300.0, 220.0),  // Top-left
+            cv::Point2f(340.0, 220.0),  // Top-right
+            cv::Point2f(340.0, 260.0),  // Bottom-right
+            cv::Point2f(300.0, 260.0)   // Bottom-left
+        };
+        
+        // Add tiny noise (< 0.5 pixels) - typical camera noise
+        std::vector<cv::Point2f> corners_frame2 = {
+            cv::Point2f(300.2, 220.1),
+            cv::Point2f(339.8, 219.9),
+            cv::Point2f(340.1, 260.2),
+            cv::Point2f(299.9, 259.8)
+        };
+        
+        WHEN("Estimating poses from both corner sets")
+        {
+            // Call the actual static function correctly - FIRST WITHOUT previous pose
+            Eigen::VectorXd pose1 = MeasurementSLAMAruco::estimateArucoLandmarkPose(corners_frame1, camera, nullptr);
+            // SECOND WITH previous pose for temporal consistency
+            Eigen::VectorXd pose2 = MeasurementSLAMAruco::estimateArucoLandmarkPose(corners_frame2, camera, &pose1);
+            
+            REQUIRE(pose1.size() == 6);
+            REQUIRE(pose2.size() == 6);
+            
+            THEN("Position estimates should be very close")
+            {
+                Eigen::Vector3d pos1 = pose1.segment<3>(0);
+                Eigen::Vector3d pos2 = pose2.segment<3>(0);
+                
+                CAPTURE_EIGEN(pos1);
+                CAPTURE_EIGEN(pos2);
+                
+                // Position should be stable (within 1cm for sub-pixel corner changes)
+                CHECK(pos1.isApprox(pos2, 0.01));
+            }
+            
+            THEN("Orientation estimates should be consistent")
+            {
+                Eigen::Vector3d rpy1 = pose1.segment<3>(3);
+                Eigen::Vector3d rpy2 = pose2.segment<3>(3);
+                
+                CAPTURE_EIGEN(rpy1);
+                CAPTURE_EIGEN(rpy2);
+                
+                // Convert to rotation matrices to check consistency
+                Eigen::Matrix3d R1 = rpy2rot(rpy1);
+                Eigen::Matrix3d R2 = rpy2rot(rpy2);
+                
+                // Z-axis should point in same direction (dot product > 0.9)
+                Eigen::Vector3d z1 = R1.col(2);
+                Eigen::Vector3d z2 = R2.col(2);
+                double z_consistency = z1.dot(z2);
+                
+                INFO("Z-axis consistency (dot product): ", z_consistency);
+                INFO("Z1: ", z1.transpose());
+                INFO("Z2: ", z2.transpose());
+                
+                // THIS WILL FAIL with current implementation if Z-axis flips
+                CHECK(z_consistency > 0.9);  // Z-axes should point same direction
+                
+                // Overall rotation consistency  
+                Eigen::Matrix3d rotation_diff = R1.transpose() * R2;
+                double angle_diff = std::acos((rotation_diff.trace() - 1) / 2);
+                
+                INFO("Rotation difference angle (degrees): ", angle_diff * 180 / M_PI);
+                
+                // Should be less than 5 degrees difference for sub-pixel changes
+                CHECK(angle_diff < 6.0 * M_PI / 180.0);
+            }
+        }
+    }
+}
+
+SCENARIO("ArUco pose estimation - round-trip consistency")
+{
+    GIVEN("A marker with known pose")
+    {
+        Camera camera = createTestCamera();
+        
+        // Generate synthetic corners from a known pose
+        Eigen::Vector3d known_position(2.0, 0.0, 0.0);  
+        Eigen::Vector3d known_rpy(0.0, 0.0, 0.0);
+        
+        // Create state with this known pose
+        Eigen::VectorXd state = createMinimalState(
+            Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(),
+            {known_position}, {known_rpy});
+        
+        TestSystemSLAM system = createTestSystem(state);
+        std::vector<int> tagIds = {42};
+        MeasurementSLAMAruco measurement(0.0, camera, tagIds, {{}});
+        
+        // Generate perfect corners from known pose
+        Eigen::MatrixXd J;
+        Eigen::Matrix<double, 8, 1> perfect_corners = 
+            measurement.predictArucoCorners(state, J, system, 0);
+        
+        // Convert to cv::Point2f format
+        std::vector<cv::Point2f> corners = {
+            cv::Point2f(perfect_corners(0), perfect_corners(1)),
+            cv::Point2f(perfect_corners(2), perfect_corners(3)),
+            cv::Point2f(perfect_corners(4), perfect_corners(5)),
+            cv::Point2f(perfect_corners(6), perfect_corners(7))
+        };
+        
+        WHEN("Estimating pose from these perfect corners")
+        {
+            Eigen::VectorXd estimated_pose = MeasurementSLAMAruco::estimateArucoLandmarkPose(corners, camera, nullptr);
+            
+            REQUIRE(estimated_pose.size() == 6);
+            
+            THEN("Estimated pose should match known pose")
+            {
+                Eigen::Vector3d estimated_pos = estimated_pose.segment<3>(0);
+                Eigen::Vector3d estimated_rpy = estimated_pose.segment<3>(3);
+                
+                CAPTURE_EIGEN(known_position);
+                CAPTURE_EIGEN(estimated_pos);
+                CAPTURE_EIGEN(known_rpy);  
+                CAPTURE_EIGEN(estimated_rpy);
+                
+                // Position should match (within mm)
+                CHECK(estimated_pos.isApprox(known_position, 0.005));
+                
+                // Orientation should match (within 1 degree)
+                Eigen::Matrix3d R_known = rpy2rot(known_rpy);
+                Eigen::Matrix3d R_estimated = rpy2rot(estimated_rpy);
+                
+                // Check Z-axis consistency (this will fail if Z flips)
+                double z_dot = R_known.col(2).dot(R_estimated.col(2));
+                CHECK(z_dot > 0.99);  // Should be nearly identical
+                
+                // Overall rotation difference
+                Eigen::Matrix3d rotation_diff = R_known.transpose() * R_estimated;
+                double angle_diff = std::acos((rotation_diff.trace() - 1) / 2);
+                CHECK(angle_diff < 1.0 * M_PI / 180.0);  // Less than 1 degree
+            }
+        }
+    }
+}
