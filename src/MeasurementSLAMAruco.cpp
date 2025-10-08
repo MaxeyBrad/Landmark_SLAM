@@ -1046,7 +1046,8 @@ void MeasurementSLAMAruco::drawConfidenceEllipses(cv::Mat & image, const SystemS
 {
     for (std::size_t i = 0; i < idxLandmarks.size(); ++i) {
         std::size_t landmarkIdx = idxLandmarks[i];
-        int featureIdx = (i < idxFeatures_.size()) ? idxFeatures_[i] : -1;
+        // int featureIdx = (i < idxFeatures_.size()) ? idxFeatures_[i] : -1;
+        int featureIdx = (landmarkIdx < idxFeatures_.size()) ? idxFeatures_[landmarkIdx] : -1;
         
         // Determine color based on association status
         cv::Scalar ellipseColor;

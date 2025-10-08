@@ -302,6 +302,27 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                 
                 // Perform data association
                 const std::vector<int> & associations = arucoMeasurement.associate(*slamSystem, visibleLandmarks);
+
+                // ADD THIS DEBUG:
+                std::cout << "\n🔴 ASSOCIATION BUG DEBUG:" << std::endl;
+                std::cout << "Detected tags: ";
+                for (int id : ids) std::cout << id << " ";
+                std::cout << std::endl;
+
+                std::cout << "Visible landmarks: ";
+                for (size_t idx : visibleLandmarks) std::cout << idx << " ";
+                std::cout << std::endl;
+
+                std::cout << "Association results: ";
+                for (int assoc : associations) std::cout << assoc << " ";
+                std::cout << std::endl;
+
+                const auto& storedTagIds = MeasurementSLAMAruco::getLandmarkTagIds();
+                std::cout << "Landmark->Tag mapping: ";
+                for (size_t i = 0; i < storedTagIds.size(); ++i) {
+                    std::cout << "L" << i << "->T" << storedTagIds[i] << " ";
+                }
+                std::cout << std::endl;
                 
                 // Process the measurement through SLAM (this will optimize the state and initialize new landmarks)
                 arucoMeasurement.process(*slamSystem);
