@@ -1040,7 +1040,9 @@ Eigen::Matrix2d MeasurementSLAMAruco::extractTagCenterCovariance(const SystemSLA
     }
 }
 
-void MeasurementSLAMAruco::drawConfidenceEllipses(cv::Mat & image, const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks, double nSigma) const
+void MeasurementSLAMAruco::drawConfidenceEllipses(cv::Mat & image, const SystemSLAM & system, 
+                                                  const std::vector<std::size_t> & idxLandmarks, 
+                                                  double nSigma) const
 {
     for (std::size_t i = 0; i < idxLandmarks.size(); ++i) {
         std::size_t landmarkIdx = idxLandmarks[i];
@@ -1048,10 +1050,17 @@ void MeasurementSLAMAruco::drawConfidenceEllipses(cv::Mat & image, const SystemS
         
         // Determine color based on association status
         cv::Scalar ellipseColor;
+        cv::Scalar textColor;
+        std::string statusText;
+        
         if (featureIdx >= 0) {
             ellipseColor = cv::Scalar(255, 0, 0);  // Blue for tracked landmarks
+            textColor = cv::Scalar(255, 255, 0);   // Cyan text
+            statusText = "L" + std::to_string(landmarkIdx) + " -> T" + std::to_string(tagIds_[featureIdx]);
         } else {
             ellipseColor = cv::Scalar(0, 0, 255);  // Red for visible but not detected
+            textColor = cv::Scalar(0, 255, 255);   // Yellow text
+            statusText = "L" + std::to_string(landmarkIdx) + " (MISSING)";
         }
         
         try {
@@ -1077,11 +1086,11 @@ void MeasurementSLAMAruco::drawConfidenceEllipses(cv::Mat & image, const SystemS
                 Eigen::Matrix2d eigenvecs = eigensolver.eigenvectors();
                 
                 // Ensure eigenvalues are positive and reasonable
-                double minEigenval = std::max(eigenvals(0), 1e-3);  // At least 1e-3 for visibility
+                double minEigenval = std::max(eigenvals(0), 1e-3);
                 double maxEigenval = std::max(eigenvals(1), 1e-3);
                 
                 // Clamp eigenvalues to reasonable range for visualization
-                minEigenval = std::min(minEigenval, 10000.0);  // Max 10000 pixels
+                minEigenval = std::min(minEigenval, 10000.0);
                 maxEigenval = std::min(maxEigenval, 10000.0);
                 
                 // Ellipse semi-axes (scaled by nSigma)
@@ -1095,21 +1104,53 @@ void MeasurementSLAMAruco::drawConfidenceEllipses(cv::Mat & image, const SystemS
                 // Rotation angle
                 double angle = std::atan2(eigenvecs(1, 1), eigenvecs(0, 1)) * 180.0 / M_PI;
                 
-                // Validate ellipse parameters before drawing
+                // Draw the ellipse
                 if (a > 0 && b > 0 && a < 10000 && b < 10000 && 
                     tagCenter.x >= 0 && tagCenter.x < image.cols && 
                     tagCenter.y >= 0 && tagCenter.y < image.rows) {
                     cv::ellipse(image, tagCenter, cv::Size2f(a, b), angle, 0, 360, ellipseColor, 2);
+                    
+                    // Calculate position for landmark ID text (outside ellipse)
+                    cv::Point2f textOffset;
+                    textOffset.x = (a + 20) * cos(angle * M_PI / 180.0);  // 20 pixels outside ellipse
+                    textOffset.y = (a + 20) * sin(angle * M_PI / 180.0);
+                    
+                    cv::Point textPos(tagCenter.x + textOffset.x, tagCenter.y + textOffset.y);
+                    
+                    // Ensure text stays within image bounds
+                    textPos.x = std::max(10, std::min(textPos.x, image.cols - 100));
+                    textPos.y = std::max(20, std::min(textPos.y, image.rows - 10));
+                    
+                    // Draw landmark ID with background
+                    int fontFace = cv::FONT_HERSHEY_SIMPLEX;
+                    double fontScale = 0.8;
+                    int thickness = 2;
+                    
+                    // Get text size for background
+                    int baseline = 0;
+                    cv::Size textSize = cv::getTextSize(statusText, fontFace, fontScale, thickness, &baseline);
+                    
+                    // Draw black background
+                    cv::Point bgTopLeft(textPos.x - 2, textPos.y - textSize.height - 2);
+                    cv::Point bgBottomRight(textPos.x + textSize.width + 2, textPos.y + baseline + 2);
+                    cv::rectangle(image, bgTopLeft, bgBottomRight, cv::Scalar(0, 0, 0), -1);
+                    
+                    // Draw landmark ID text
+                    cv::putText(image, statusText, textPos, fontFace, fontScale, textColor, thickness);
+                    
                 } else {
-                    // Fallback: draw simple circle if ellipse parameters are invalid
-                    cv::circle(image, tagCenter, 10, ellipseColor, 2);
+                    // Fallback: draw simple circle with text
+                    cv::circle(image, tagCenter, 15, ellipseColor, 2);
+                    cv::putText(image, statusText, cv::Point(tagCenter.x + 20, tagCenter.y), 
+                               cv::FONT_HERSHEY_SIMPLEX, 0.6, textColor, 2);
                 }
             } else {
-                // Fallback: draw simple circle if eigendecomposition fails
+                // Fallback: draw simple circle with text
                 cv::circle(image, tagCenter, 15, ellipseColor, 2);
+                cv::putText(image, statusText, cv::Point(tagCenter.x + 20, tagCenter.y), 
+                           cv::FONT_HERSHEY_SIMPLEX, 0.6, textColor, 2);
             }
         } catch (const std::exception & e) {
-            // Skip this landmark if covariance extraction fails
             std::cerr << "Warning: Failed to draw confidence ellipse for landmark " << landmarkIdx << ": " << e.what() << std::endl;
         }
     }

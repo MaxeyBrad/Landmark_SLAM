@@ -17,6 +17,7 @@
 #include "visualNavigation.h"
 #include <opencv2/highgui.hpp>
 #include "rotation.hpp"
+#include <opencv2/imgproc.hpp>
 
 // Function to read a single character without requiring Enter
 char getChar() {
@@ -174,7 +175,43 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
         // Draw detected markers
         if (!ids.empty()) {
             cv::aruco::drawDetectedMarkers(imgProcessed, corners, ids);  // Green outline and ID
-            
+
+            // Draw BIGGER tag IDs (positioned ABOVE the tag)
+            for (size_t i = 0; i < ids.size(); ++i) {
+                // Calculate marker center
+                cv::Point2f center(0, 0);
+                for (const auto& corner : corners[i]) {
+                    center.x += corner.x;
+                    center.y += corner.y;
+                }
+                center.x /= 4.0f;
+                center.y /= 4.0f;
+                
+                // Draw large tag ID
+                std::string tagText = "T:" + std::to_string(ids[i]);
+                int fontFace = cv::FONT_HERSHEY_SIMPLEX;
+                double fontScale = 1.2;  // Bigger font
+                int thickness = 3;
+                cv::Scalar textColor(0, 255, 255);  // Yellow text
+                cv::Scalar backgroundColor(0, 0, 0);  // Black background
+                
+                // Get text size for background rectangle
+                int baseline = 0;
+                cv::Size textSize = cv::getTextSize(tagText, fontFace, fontScale, thickness, &baseline);
+                
+                // Position text ABOVE the tag (subtract pixels to move up)
+                int textOffset = -40;  // Move 40 pixels above the tag center
+                
+                // Draw black background rectangle (above the tag)
+                cv::Point bgTopLeft(center.x - textSize.width/2 - 5, center.y + textOffset - textSize.height - 5);
+                cv::Point bgBottomRight(center.x + textSize.width/2 + 5, center.y + textOffset + 10);
+                cv::rectangle(imgProcessed, bgTopLeft, bgBottomRight, backgroundColor, -1);
+                
+                // Draw tag ID text (above the tag)
+                cv::Point textPos(center.x - textSize.width/2, center.y + textOffset);
+                cv::putText(imgProcessed, tagText, textPos, fontFace, fontScale, textColor, thickness);
+            }
+                        
         // Draw pose axes for each detected tag using fixed pose estimation
         std::vector<cv::Vec3d> rvecs, tvecs;
         static std::map<int, Eigen::VectorXd> previousPoses; // Store previous poses for temporal consistency
