@@ -126,6 +126,58 @@ GaussianInfo<double> MeasurementSLAMAruco::predictFeatureBundleDensity(const Sys
     return pxv.affineTransform(func);
 }
 
+// const std::vector<int> & MeasurementSLAMAruco::associate(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks)
+// {
+//     idxFeatures_.clear();
+//     idxFeatures_.resize(idxLandmarks.size(), -1);  // Initialize with "no association"
+    
+//     std::cout << "ArUco Data Association:" << std::endl;
+//     std::cout << "  Detected " << tagIds_.size() << " tags, tracking " << idxLandmarks.size() << " landmarks" << std::endl;
+    
+//     // For each landmark in the map, try to find a corresponding detected tag
+//     for (std::size_t i = 0; i < idxLandmarks.size(); ++i) {
+//         std::size_t landmarkIdx = idxLandmarks[i];
+        
+//         // Check if we have a tag ID stored for this landmark
+//         if (landmarkIdx < landmarkTagIds_.size()) {
+//             int expectedTagId = landmarkTagIds_[landmarkIdx];
+            
+//             // Search for this tag ID in detected tags
+//             for (std::size_t j = 0; j < tagIds_.size(); ++j) {
+//                 if (tagIds_[j] == expectedTagId) {
+//                     idxFeatures_[i] = static_cast<int>(j);  // Associate landmark i with detection j
+//                     std::cout << "  Associated landmark " << landmarkIdx << " (tag " << expectedTagId << ") with detection " << j << std::endl;
+//                     break;
+//                 }
+//             }
+            
+//             if (idxFeatures_[i] == -1) {
+//                 std::cout << "  Landmark " << landmarkIdx << " (tag " << expectedTagId << ") not detected this frame" << std::endl;
+//             }
+//         }
+//     }
+    
+//     // Report any unassociated detections (these would need new landmarks)
+//     std::vector<bool> detectionUsed(tagIds_.size(), false);
+//     for (int featureIdx : idxFeatures_) {
+//         if (featureIdx >= 0) {
+//             detectionUsed[featureIdx] = true;
+//         }
+//     }
+    
+//     std::cout << "  Unassociated detections (new landmarks needed):";
+//     for (std::size_t i = 0; i < tagIds_.size(); ++i) {
+//         if (!detectionUsed[i]) {
+//             std::cout << " tag " << tagIds_[i];
+//         }
+//     }
+//     std::cout << std::endl;
+    
+//     return idxFeatures_;
+// }
+// In MeasurementSLAMAruco.cpp
+// Replace the existing associate() method with this version:
+
 const std::vector<int> & MeasurementSLAMAruco::associate(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks)
 {
     idxFeatures_.clear();
@@ -133,6 +185,43 @@ const std::vector<int> & MeasurementSLAMAruco::associate(const SystemSLAM & syst
     
     std::cout << "ArUco Data Association:" << std::endl;
     std::cout << "  Detected " << tagIds_.size() << " tags, tracking " << idxLandmarks.size() << " landmarks" << std::endl;
+    
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // NEW: Pre-filter detections - check which tags are within reliable FOV
+    // ═══════════════════════════════════════════════════════════════════════════════
+    std::vector<bool> detectionInFOV(tagIds_.size(), false);
+    int numInFOV = 0;
+    
+    for (std::size_t i = 0; i < tagIds_.size(); ++i) {
+        // Compute tag center from the 4 corners
+        cv::Point2f centerPixel(0, 0);
+        for (const auto& corner : corners_[i]) {
+            centerPixel.x += corner.x;
+            centerPixel.y += corner.y;
+        }
+        centerPixel.x /= 4.0f;
+        centerPixel.y /= 4.0f;
+        
+        // Convert pixel to unit vector in camera frame
+        cv::Vec3d centerVector = camera_.pixelToVector(cv::Vec2d(centerPixel.x, centerPixel.y));
+        
+        // Check if within reliable field of view
+        if (camera_.isVectorWithinFOV(centerVector)) {
+            detectionInFOV[i] = true;
+            numInFOV++;
+        } else {
+            std::cout << "  WARNING: Tag " << tagIds_[i] 
+                      << " at pixel [" << centerPixel.x << ", " << centerPixel.y 
+                      << "] is outside reliable FOV - measurement will be IGNORED" << std::endl;
+        }
+    }
+    
+    std::cout << "  FOV filter: " << numInFOV << "/" << tagIds_.size() 
+              << " detected tags are within reliable FOV" << std::endl;
+    
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Data Association: Match landmarks to detections (only those within FOV)
+    // ═══════════════════════════════════════════════════════════════════════════════
     
     // For each landmark in the map, try to find a corresponding detected tag
     for (std::size_t i = 0; i < idxLandmarks.size(); ++i) {
@@ -145,14 +234,26 @@ const std::vector<int> & MeasurementSLAMAruco::associate(const SystemSLAM & syst
             // Search for this tag ID in detected tags
             for (std::size_t j = 0; j < tagIds_.size(); ++j) {
                 if (tagIds_[j] == expectedTagId) {
-                    idxFeatures_[i] = static_cast<int>(j);  // Associate landmark i with detection j
-                    std::cout << "  Associated landmark " << landmarkIdx << " (tag " << expectedTagId << ") with detection " << j << std::endl;
+                    // ═══════════════════════════════════════════════════════════════
+                    // NEW: Only associate if detection is within reliable FOV
+                    // ═══════════════════════════════════════════════════════════════
+                    if (detectionInFOV[j]) {
+                        idxFeatures_[i] = static_cast<int>(j);  // Associate landmark i with detection j
+                        std::cout << "  Associated landmark " << landmarkIdx 
+                                  << " (tag " << expectedTagId << ") with detection " << j 
+                                  << " (within FOV)" << std::endl;
+                    } else {
+                        std::cout << "  REJECTED: Landmark " << landmarkIdx 
+                                  << " (tag " << expectedTagId << ") detected at edge - outside reliable FOV" 
+                                  << std::endl;
+                    }
                     break;
                 }
             }
             
             if (idxFeatures_[i] == -1) {
-                std::cout << "  Landmark " << landmarkIdx << " (tag " << expectedTagId << ") not detected this frame" << std::endl;
+                std::cout << "  Landmark " << landmarkIdx 
+                          << " (tag " << expectedTagId << ") not detected this frame" << std::endl;
             }
         }
     }
@@ -167,7 +268,7 @@ const std::vector<int> & MeasurementSLAMAruco::associate(const SystemSLAM & syst
     
     std::cout << "  Unassociated detections (new landmarks needed):";
     for (std::size_t i = 0; i < tagIds_.size(); ++i) {
-        if (!detectionUsed[i]) {
+        if (!detectionUsed[i] && detectionInFOV[i]) {  // Only report if within FOV
             std::cout << " tag " << tagIds_[i];
         }
     }
@@ -940,6 +1041,27 @@ void MeasurementSLAMAruco::update(SystemBase & system)
         }
     }
     
+    // // Initialize new landmarks for unassociated detections
+    // int numNewLandmarks = 0;
+    // for (std::size_t i = 0; i < tagIds_.size(); ++i) {
+    //     if (!detectionUsed[i]) {
+    //         // This tag was detected but not associated with any landmark
+            
+    //         // Check if we've already created a landmark for this tag ID
+    //         int existingLandmarkIdx = findLandmarkByTagId(tagIds_[i]);
+            
+    //         if (existingLandmarkIdx == -1) {
+    //             // This is a NEW tag we've never seen before
+    //             std::cout << "  Initializing new landmark for tag " << tagIds_[i] << std::endl;
+                
+    //             initializeNewLandmark(slamSystem, tagIds_[i], corners_[i], camera_);
+    //             numNewLandmarks++;
+    //         } else {
+    //             std::cout << "  Tag " << tagIds_[i] << " already has landmark (idx=" 
+    //                       << existingLandmarkIdx << "), skipping" << std::endl;
+    //         }
+    //     }
+    // }
     // Initialize new landmarks for unassociated detections
     int numNewLandmarks = 0;
     for (std::size_t i = 0; i < tagIds_.size(); ++i) {
@@ -951,18 +1073,50 @@ void MeasurementSLAMAruco::update(SystemBase & system)
             
             if (existingLandmarkIdx == -1) {
                 // This is a NEW tag we've never seen before
-                std::cout << "  Initializing new landmark for tag " << tagIds_[i] << std::endl;
+                
+                // ═══════════════════════════════════════════════════════════
+                // Check if tag center is within reliable field of view
+                // ═══════════════════════════════════════════════════════════
+                
+                // Compute tag center from the 4 corners
+                cv::Point2f centerPixel(0, 0);
+                for (const auto& corner : corners_[i]) {
+                    centerPixel.x += corner.x;
+                    centerPixel.y += corner.y;
+                }
+                centerPixel.x /= 4.0f;
+                centerPixel.y /= 4.0f;
+                
+                // Convert pixel to unit vector in camera frame (already in camera coordinates)
+                cv::Vec3d centerVector = camera_.pixelToVector(cv::Vec2d(centerPixel.x, centerPixel.y));
+                
+                // Check if within reliable field of view (no rotation needed - already in camera frame)
+                if (!camera_.isVectorWithinFOV(centerVector)) {
+                    std::cout << "  SKIPPED: Tag " << tagIds_[i] 
+                            << " at pixel [" << centerPixel.x << ", " << centerPixel.y 
+                            << "] - outside reliable FOV. Not initializing landmark." << std::endl;
+                    continue;  // Skip this tag
+                }
+                
+                // ═══════════════════════════════════════════════════════════
+                // Tag is within FOV, proceed with initialization
+                // ═══════════════════════════════════════════════════════════
+                
+                std::cout << "  Initializing new landmark for tag " << tagIds_[i] 
+                        << " (center pixel: [" << centerPixel.x << ", " << centerPixel.y << "])" << std::endl;
                 
                 initializeNewLandmark(slamSystem, tagIds_[i], corners_[i], camera_);
                 numNewLandmarks++;
             } else {
-                std::cout << "  Tag " << tagIds_[i] << " already has landmark (idx=" 
-                          << existingLandmarkIdx << "), skipping" << std::endl;
+                std::cout << "  Tag " << tagIds_[i] << " already has landmark (idx="
+                        << existingLandmarkIdx << "), skipping" << std::endl;
             }
         }
     }
-    
-    std::cout << "Initialized " << numNewLandmarks << " new landmarks" << std::endl;
+
+    std::cout << "Initialized " << numNewLandmarks << " new landmarks this frame" << std::endl;
+
+    // std::cout << "Initialized " << numNewLandmarks << " new landmarks" << std::endl;
     std::cout << "Map now has " << slamSystem.numberLandmarks() << " landmarks" << std::endl;
     
     
