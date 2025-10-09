@@ -212,54 +212,188 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                 cv::putText(imgProcessed, tagText, textPos, fontFace, fontScale, textColor, thickness);
             }
                         
-        // Draw pose axes for each detected tag using fixed pose estimation
-        std::vector<cv::Vec3d> rvecs, tvecs;
-        static std::map<int, Eigen::VectorXd> previousPoses; // Store previous poses for temporal consistency
+        // // Draw pose axes for each detected tag using fixed pose estimation
+        // std::vector<cv::Vec3d> rvecs, tvecs;
+        // static std::map<int, Eigen::VectorXd> previousPoses; // Store previous poses for temporal consistency
 
-        for (size_t i = 0; i < ids.size(); ++i) {
-            int tagId = ids[i];
+        // for (size_t i = 0; i < ids.size(); ++i) {
+        //     int tagId = ids[i];
             
-            // Get previous pose for temporal consistency (if available)
-            Eigen::VectorXd* prevPose = nullptr;
-            auto it = previousPoses.find(tagId);
-            if (it != previousPoses.end()) {
-                prevPose = &(it->second);
-            }
+        //     // Get previous pose for temporal consistency (if available)
+        //     Eigen::VectorXd* prevPose = nullptr;
+        //     auto it = previousPoses.find(tagId);
+        //     if (it != previousPoses.end()) {
+        //         prevPose = &(it->second);
+        //     }
             
-            // Use your fixed pose estimation function
-            Eigen::VectorXd pose = MeasurementSLAMAruco::estimateArucoLandmarkPose(corners[i], camera, prevPose);
+        //     // Use your fixed pose estimation function
+        //     Eigen::VectorXd pose = MeasurementSLAMAruco::estimateArucoLandmarkPose(corners[i], camera, prevPose);
             
-            if (pose.norm() > 0.0) {  // Valid pose estimated
-                // Store for next frame's temporal consistency
-                previousPoses[tagId] = pose;
+        //     if (pose.norm() > 0.0) {  // Valid pose estimated
+        //         // Store for next frame's temporal consistency
+        //         previousPoses[tagId] = pose;
                 
-                // Convert back to camera frame for visualization (OpenCV expects camera frame)
-                Eigen::Matrix3d R_bc;
-                R_bc << 0, 0, 1,   // Body X (North) = Camera Z (forward)
-                        1, 0, 0,   // Body Y (East) = Camera X (right)
-                        0, 1, 0;   // Body Z (Down) = Camera Y (down)
+        //         // Convert back to camera frame for visualization (OpenCV expects camera frame)
+        //         Eigen::Matrix3d R_bc;
+        //         R_bc << 0, 0, 1,   // Body X (North) = Camera Z (forward)
+        //                 1, 0, 0,   // Body Y (East) = Camera X (right)
+        //                 0, 1, 0;   // Body Z (Down) = Camera Y (down)
                 
-                // Transform from body frame back to camera frame
-                Eigen::Vector3d pos_body = pose.segment<3>(0);
-                Eigen::Vector3d rpy_body = pose.segment<3>(3);
+        //         // Transform from body frame back to camera frame
+        //         Eigen::Vector3d pos_body = pose.segment<3>(0);
+        //         Eigen::Vector3d rpy_body = pose.segment<3>(3);
                 
-                Eigen::Vector3d pos_camera = R_bc.transpose() * pos_body;
-                Eigen::Matrix3d R_body = rpy2rot(rpy_body);
-                Eigen::Matrix3d R_camera = R_bc.transpose() * R_body;
+        //         Eigen::Vector3d pos_camera = R_bc.transpose() * pos_body;
+        //         Eigen::Matrix3d R_body = rpy2rot(rpy_body);
+        //         Eigen::Matrix3d R_camera = R_bc.transpose() * R_body;
                 
-                // Convert rotation matrix to Rodrigues vector (what OpenCV expects)
+        //         // Convert rotation matrix to Rodrigues vector (what OpenCV expects)
+        //         cv::Mat R_cv;
+        //         cv::eigen2cv(R_camera, R_cv);
+        //         cv::Mat rvec_mat;
+        //         cv::Rodrigues(R_cv, rvec_mat);
+        //         cv::Vec3d rvec(rvec_mat.at<double>(0), rvec_mat.at<double>(1), rvec_mat.at<double>(2));
+                
+        //         cv::Vec3d tvec(pos_camera(0), pos_camera(1), pos_camera(2));
+                
+        //         // Draw stable axes
+        //         cv::drawFrameAxes(imgProcessed, camera.cameraMatrix, camera.distCoeffs, rvec, tvec, 0.1);
+        //     }
+        // }
+       // ═════════════════════════════════════════════════════════════════════════
+        // In visualNavigation.cpp - REPLACE the section that draws pose axes
+        // ═════════════════════════════════════════════════════════════════════════
+
+        // Find this section (around line 350-400) and REPLACE it:
+
+        // OLD CODE TO REMOVE:
+        // Draw pose axes for each detected tag using fixed pose estimation
+        // std::vector<cv::Vec3d> rvecs, tvecs;
+        // static std::map<int, Eigen::VectorXd> previousPoses;
+        // ... [delete the entire raw PnP axes drawing section]
+
+        // ═════════════════════════════════════════════════════════════════════════
+        // NEW CODE: Draw SLAM landmark axes (AFTER SLAM processing)
+        // ═════════════════════════════════════════════════════════════════════════
+
+        if (slamSystem != nullptr && slamSystem->numberLandmarks() > 0) {
+            std::cout << "\n=== Drawing SLAM Landmark Axes ===" << std::endl;
+            
+            // Get current camera pose from SLAM state
+            Eigen::VectorXd currentState = slamSystem->density.mean();
+            Eigen::Vector3d r_B_n = currentState.segment<3>(6);   // Body position in world
+            Eigen::Vector3d theta_bn = currentState.segment<3>(9); // Body orientation
+            Eigen::Matrix3d R_nb = rpy2rot(theta_bn);             // World to body rotation
+            
+            // Define body-to-camera rotation
+            Eigen::Matrix3d R_bc;
+            R_bc << 0, 0, 1,   // Body X (North) = Camera Z (forward)
+                    1, 0, 0,   // Body Y (East) = Camera X (right)
+                    0, 1, 0;   // Body Z (Down) = Camera Y (down)
+            
+            // Get landmark tag IDs for association
+            const auto& landmarkTagIds = MeasurementSLAMAruco::getLandmarkTagIds();
+            
+            // Draw axes for each landmark in the SLAM map
+            for (std::size_t landmarkIdx = 0; landmarkIdx < slamSystem->numberLandmarks(); ++landmarkIdx) {
+                // Get landmark pose from SLAM state (in world frame)
+                std::size_t stateIdx = slamSystem->landmarkPositionIndex(landmarkIdx);
+                Eigen::Vector3d r_L_n = currentState.segment<3>(stateIdx);      // Landmark position (world)
+                Eigen::Vector3d theta_Ln = currentState.segment<3>(stateIdx + 3); // Landmark orientation (world)
+                Eigen::Matrix3d R_nL = rpy2rot(theta_Ln);                       // World to landmark rotation
+                
+                // Transform landmark pose from world frame to camera frame
+                // Step 1: World → Body
+                Eigen::Vector3d r_L_b = R_nb.transpose() * (r_L_n - r_B_n);
+                Eigen::Matrix3d R_bL = R_nb.transpose() * R_nL;
+                
+                // Step 2: Body → Camera
+                Eigen::Vector3d r_L_c = R_bc.transpose() * r_L_b;
+                Eigen::Matrix3d R_cL = R_bc.transpose() * R_bL;
+                
+                // Check if landmark is in front of camera (positive Z)
+                if (r_L_c(2) <= 0.0) {
+                    std::cout << "  Landmark " << landmarkIdx << " is behind camera (z=" 
+                            << r_L_c(2) << "), skipping axes" << std::endl;
+                    continue;
+                }
+                
+                // Check if landmark is within camera field of view
+                cv::Vec3d landmarkPosCV(r_L_n(0), r_L_n(1), r_L_n(2));
+                Pose<double> Tnb(R_nb, r_B_n);
+                if (!camera.isWorldWithinFOV(landmarkPosCV, Tnb)) {
+                    std::cout << "  Landmark " << landmarkIdx << " is outside FOV, skipping axes" << std::endl;
+                    continue;
+                }
+                
+                // Convert rotation matrix to Rodrigues vector for OpenCV
                 cv::Mat R_cv;
-                cv::eigen2cv(R_camera, R_cv);
+                cv::eigen2cv(R_cL, R_cv);
                 cv::Mat rvec_mat;
                 cv::Rodrigues(R_cv, rvec_mat);
                 cv::Vec3d rvec(rvec_mat.at<double>(0), rvec_mat.at<double>(1), rvec_mat.at<double>(2));
+                cv::Vec3d tvec(r_L_c(0), r_L_c(1), r_L_c(2));
                 
-                cv::Vec3d tvec(pos_camera(0), pos_camera(1), pos_camera(2));
+                // Draw axes for this landmark (0.1m = 100mm length)
+                cv::drawFrameAxes(imgProcessed, camera.cameraMatrix, camera.distCoeffs, 
+                                rvec, tvec, 0.1);
                 
-                // Draw stable axes
-                cv::drawFrameAxes(imgProcessed, camera.cameraMatrix, camera.distCoeffs, rvec, tvec, 0.1);
+                // Draw landmark ID label near the axes
+                if (landmarkIdx < landmarkTagIds.size()) {
+                    // Project landmark center to image
+                    std::vector<cv::Point3d> landmarkCenter = {cv::Point3d(r_L_c(0), r_L_c(1), r_L_c(2))};
+                    std::vector<cv::Point2d> imagePoint;
+                    cv::Mat rvec_zero = cv::Mat::zeros(3, 1, CV_64F);
+                    cv::Mat tvec_zero = cv::Mat::zeros(3, 1, CV_64F);
+                    cv::projectPoints(landmarkCenter, rvec_zero, tvec_zero, 
+                                    camera.cameraMatrix, camera.distCoeffs, imagePoint);
+                    
+                    if (!imagePoint.empty() && 
+                        imagePoint[0].x >= 0 && imagePoint[0].x < imgProcessed.cols &&
+                        imagePoint[0].y >= 0 && imagePoint[0].y < imgProcessed.rows) {
+                        
+                        int tagId = landmarkTagIds[landmarkIdx];
+                        std::string labelText = "L" + std::to_string(landmarkIdx) + 
+                                            " (T" + std::to_string(tagId) + ")";
+                        
+                        // Draw label with background
+                        int fontFace = cv::FONT_HERSHEY_SIMPLEX;
+                        double fontScale = 0.6;
+                        int thickness = 2;
+                        int baseline = 0;
+                        cv::Size textSize = cv::getTextSize(labelText, fontFace, fontScale, thickness, &baseline);
+                        
+                        // // Position label above the landmark
+                        // cv::Point textPos(imagePoint[0].x - textSize.width/2, imagePoint[0].y - 15);
+                        
+                        // // Ensure text stays within image bounds
+                        // textPos.x = std::max(5, std::min(textPos.x, imgProcessed.cols - textSize.width - 5));
+                        // textPos.y = std::max(textSize.height + 5, std::min(textPos.y, imgProcessed.rows - 5));
+                        
+                        // // Draw background rectangle
+                        // cv::Point bgTopLeft(textPos.x - 3, textPos.y - textSize.height - 3);
+                        // cv::Point bgBottomRight(textPos.x + textSize.width + 3, textPos.y + baseline + 3);
+                        // cv::rectangle(imgProcessed, bgTopLeft, bgBottomRight, cv::Scalar(0, 0, 0), -1);
+                        
+                        // // Draw text
+                        // cv::putText(imgProcessed, labelText, textPos, fontFace, fontScale, 
+                        //         cv::Scalar(0, 255, 255), thickness);  // Cyan text
+                    }
+                }
+                
+                std::cout << "  Drew axes for Landmark " << landmarkIdx 
+                        << " (Tag " << (landmarkIdx < landmarkTagIds.size() ? landmarkTagIds[landmarkIdx] : -1) 
+                        << ") at camera pos [" << r_L_c.transpose() << "]" << std::endl;
             }
+            
+            std::cout << "=== Finished drawing " << slamSystem->numberLandmarks() 
+                    << " landmark axes ===" << std::endl;
         }
+
+        // ═════════════════════════════════════════════════════════════════════════
+        // PLACEMENT NOTE: Put this code AFTER arucoMeasurement.process(*slamSystem)
+        // and BEFORE drawing confidence ellipses
+        // ═════════════════════════════════════════════════════════════════════════
             
             // SLAM processing for ArUco scenario
             std::cout << "Checking SLAM conditions: scenario=" << scenario << ", slamSystem=" << (slamSystem ? "valid" : "null") << std::endl;

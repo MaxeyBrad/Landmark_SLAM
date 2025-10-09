@@ -37,6 +37,8 @@ MeasurementSLAMAruco::MeasurementSLAMAruco(double time,
     , corners_(corners)
     , sigma_(2.0)  // 5 pixel measurement noise - more confident ArUco detection
 {
+
+    // updateMethod_ = UpdateMethod::NEWTONTRUSTEIG;  // ✅ Use Newton's method
     assert(tagIds_.size() == corners_.size());
     
     // Verify each tag has exactly 4 corners
@@ -599,7 +601,7 @@ void MeasurementSLAMAruco::initializeNewLandmark(
     // epsilon controls uncertainty: smaller epsilon = larger covariance
     // For ArUco: epsilon = 0.1 to 0.2 gives reasonable initial uncertainty
     
-    double epsilon_position = 0.2;      // sqrt_info = 0.2 → sqrt_cov ≈ 5m
+    double epsilon_position = 0.5;      // sqrt_info = 0.2 → sqrt_cov ≈ 5m
     double epsilon_orientation = 0.5;   // sqrt_info = 0.5 → sqrt_cov ≈ 2 rad ≈ 115°
     
     Eigen::MatrixXd sqrtInfo_plus = Eigen::MatrixXd::Zero(6, 6);
@@ -611,10 +613,23 @@ void MeasurementSLAMAruco::initializeNewLandmark(
         mu_plus, 
         sqrtInfo_plus
     );
-    
-    std::cout << "Prior uncertainty:" << std::endl;
-    std::cout << "  Position sqrt_cov ≈ " << (1.0/epsilon_position) << " meters" << std::endl;
-    std::cout << "  Orientation sqrt_cov ≈ " << (1.0/epsilon_orientation) << " radians" << std::endl;
+
+    // OPTION 1: Keep epsilon as sqrt(information), convert before passing
+    // double epsilon_position = 0.2;      // sqrt(information)
+    // double epsilon_orientation = 0.5;   // sqrt(information)
+
+    // // Convert to sqrt(covariance) for fromSqrtMoment
+    // Eigen::MatrixXd sqrtCov_plus = Eigen::MatrixXd::Zero(6, 6);
+    // sqrtCov_plus.block<3,3>(0,0) = (1.0/epsilon_position) * Eigen::Matrix3d::Identity();  // sqrt(cov) = 1/sqrt(info)
+    // sqrtCov_plus.block<3,3>(3,3) = (1.0/epsilon_orientation) * Eigen::Matrix3d::Identity();
+
+    // GaussianInfo<double> landmarkPrior = GaussianInfo<double>::fromSqrtMoment(
+    //     mu_plus, 
+    //     sqrtCov_plus  // ✓ Now it's sqrt(covariance)
+    // );
+    // std::cout << "Prior uncertainty:" << std::endl;
+    // std::cout << "  Position sqrt_cov ≈ " << (1.0/epsilon_position) << " meters" << std::endl;
+    // std::cout << "  Orientation sqrt_cov ≈ " << (1.0/epsilon_orientation) << " radians" << std::endl;
     
     // ═════════════════════════════════════════════════════════════════════════
     // STEP 3: Augment State with New Landmark Using operator*=
