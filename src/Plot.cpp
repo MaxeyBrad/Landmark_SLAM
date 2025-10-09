@@ -628,6 +628,73 @@ Plot::Plot(const Camera & camera)
     interactor->Initialize();
 }
 
+// void Plot::render()
+// {
+//     double r,g,b;   
+//     hsv2rgb(330, 1., 1., r, g, b);
+//     qpCamera.update(pSystem->cameraPositionDensity(camera));
+//     qpCamera.getActor()->GetProperty()->SetOpacity(0.1);
+//     qpCamera.getActor()->GetProperty()->SetColor(r,g,b);
+
+//     Bounds globalBounds;
+//     qpCamera.bounds.setExtremity(globalBounds); 
+
+//     // Grow landmark quadric plots to match number of landmarks
+//     while (qpLandmarks.size() < pSystem->numberLandmarks())
+//     {
+//         QuadricPlot qp;
+//         qpLandmarks.push_back(qp);
+//         threeDimRenderer->AddActor(qpLandmarks.back().getActor());
+//     }
+
+//     // Shrink landmark quadric plots to match number of landmarks
+//     while (qpLandmarks.size() > pSystem->numberLandmarks())
+//     {
+//         threeDimRenderer->RemoveActor(qpLandmarks.back().getActor());
+//         qpLandmarks.pop_back();
+//     }    
+
+//     for (std::size_t i = 0; i < pSystem->numberLandmarks(); ++i)
+//     {
+//         // Determine color based on visibility and tracking status
+//         // Get the association results if available
+//         const std::vector<int> & associations = pMeasurement->getAssociations();
+//         bool isTracked = (i < associations.size()) && (associations[i] >= 0);  // Has valid association
+//         bool isVisible = (i < associations.size());  // Landmark is in the visible list
+        
+//         // Set color according to assignment specification:
+//         // Blue: visible and tracked
+//         // Red: visible but not tracked
+//         // Yellow: not visible
+//         if (isTracked) {
+//             r = 0.0; g = 0.0; b = 1.0;  // Blue
+//         } else if (isVisible) {
+//             r = 1.0; g = 0.0; b = 0.0;  // Red
+//         } else {
+//             r = 1.0; g = 1.0; b = 0.0;  // Yellow
+//         }
+
+//         // Disabled: Using MeasurementSLAMAruco::drawConfidenceEllipses instead
+//         // GaussianInfo prQOi = pMeasurement->predictFeatureDensity(*pSystem, i);
+//         // plotGaussianConfidenceEllipse(pSystem->view(), prQOi, rgb);
+
+//         QuadricPlot & qp = qpLandmarks[i];
+//         qp.update(pSystem->landmarkPositionDensity(i));
+//         qp.getActor()->GetProperty()->SetOpacity(0.5);
+//         qp.getActor()->GetProperty()->SetColor(r, g, b);
+//         qp.bounds.setExtremity(globalBounds); 
+//     }
+
+//     ap.update(globalBounds);
+//     Eigen::Vector3d rCNn = pSystem->cameraPositionDensity(camera).mean();
+//     Eigen::Vector3d Thetanc = pSystem->cameraOrientationEulerDensity(camera).mean();
+//     bp.update(rCNn, Thetanc);
+//     fp.update(rCNn, Thetanc);
+//     ip.update(pSystem->view());
+
+//     renderWindow->Render();
+// }
+
 void Plot::render()
 {
     double r,g,b;   
@@ -654,29 +721,36 @@ void Plot::render()
         qpLandmarks.pop_back();
     }    
 
+    // Get current camera pose for FOV checks
+    Eigen::Vector3d rCNn = pSystem->cameraPositionDensity(camera).mean();
+    Eigen::Vector3d Thetanc = pSystem->cameraOrientationEulerDensity(camera).mean();
+    Pose<double> Tnc(rpy2rot(Thetanc), rCNn);
+    Pose<double> Tnb = camera.cameraToBody(Tnc);
+
     for (std::size_t i = 0; i < pSystem->numberLandmarks(); ++i)
     {
-        // Determine color based on visibility and tracking status
-        // Get the association results if available
+        // Get landmark position
+        Eigen::Vector3d landmarkPos = pSystem->landmarkPositionDensity(i).mean();
+        cv::Vec3d landmarkPosCV(landmarkPos(0), landmarkPos(1), landmarkPos(2));
+        
+        // Check if landmark is within camera field of view
+        bool isVisible = camera.isWorldWithinFOV(landmarkPosCV, Tnb);
+        
+        // Get the association results
         const std::vector<int> & associations = pMeasurement->getAssociations();
-        bool isTracked = (i < associations.size()) && (associations[i] >= 0);  // Has valid association
-        bool isVisible = (i < associations.size());  // Landmark is in the visible list
+        bool isTracked = (i < associations.size()) && (associations[i] >= 0);
         
         // Set color according to assignment specification:
         // Blue: visible and tracked
         // Red: visible but not tracked
         // Yellow: not visible
-        if (isTracked) {
-            r = 0.0; g = 0.0; b = 1.0;  // Blue
-        } else if (isVisible) {
-            r = 1.0; g = 0.0; b = 0.0;  // Red
+        if (isVisible && isTracked) {
+            r = 0.0; g = 0.0; b = 1.0;  // Blue - within FOV and detected
+        } else if (isVisible && !isTracked) {
+            r = 1.0; g = 0.0; b = 0.0;  // Red - within FOV but not detected
         } else {
-            r = 1.0; g = 1.0; b = 0.0;  // Yellow
+            r = 1.0; g = 1.0; b = 0.0;  // Yellow - outside FOV
         }
-
-        // Disabled: Using MeasurementSLAMAruco::drawConfidenceEllipses instead
-        // GaussianInfo prQOi = pMeasurement->predictFeatureDensity(*pSystem, i);
-        // plotGaussianConfidenceEllipse(pSystem->view(), prQOi, rgb);
 
         QuadricPlot & qp = qpLandmarks[i];
         qp.update(pSystem->landmarkPositionDensity(i));
@@ -686,15 +760,12 @@ void Plot::render()
     }
 
     ap.update(globalBounds);
-    Eigen::Vector3d rCNn = pSystem->cameraPositionDensity(camera).mean();
-    Eigen::Vector3d Thetanc = pSystem->cameraOrientationEulerDensity(camera).mean();
     bp.update(rCNn, Thetanc);
     fp.update(rCNn, Thetanc);
     ip.update(pSystem->view());
 
     renderWindow->Render();
 }
-
 void Plot::start() const
 {
     interactor->Start(); // block on interactor
