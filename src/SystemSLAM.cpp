@@ -86,46 +86,7 @@ Eigen::VectorXd SystemSLAM::dynamics(double t, const Eigen::VectorXd & x, const 
     return f;
 }
 
-// // Evaluate f(x) and its Jacobian J = df/fx from the SDE dx = f(x)*dt + dw
-// Eigen::VectorXd SystemSLAM::dynamics(double t, const Eigen::VectorXd & x, const Eigen::VectorXd & u, Eigen::MatrixXd & J) const
-// {
-//     Eigen::VectorXd f = dynamics(t, x, u);
-
-//     // Jacobian J = df/dx
-//     //    
-//     //     [  0                  0 0 ]
-//     // J = [ JK d(JK(eta)*nu)/deta 0 ]
-//     //     [  0                  0 0 ]
-//     //
-//     J.resize(f.size(), x.size());
-//     J.setZero();
-
-//     // Extract state components
-//     Eigen::Vector3d vBNb = x.segment<3>(0);       
-//     Eigen::Vector3d omegaBNb = x.segment<3>(3);   
-//     Eigen::Vector3d thetaBN = x.segment<3>(9);    
-
-//     // Jacobian for position derivative: df6_8/dx = d(Rnb * vBNb)/dx
-//     // df6_8/dvBNb = Rnb (derivative w.r.t. velocity)
-//     Eigen::Matrix3d Rnb = rpy2rot(thetaBN);
-//     J.block<3,3>(6, 0) = Rnb;
-
-//     // df6_8/dthetaBN = d(Rnb)/dthetaBN * vBNb (derivative w.r.t. orientation)
-//     // This requires computing derivative of rotation matrix - complex but important for accuracy
-//     // For now, we'll use a simplified approach focusing on the main coupling
-    
-//     // Jacobian for orientation derivative: df9_11/dx = d(TK * omegaBNb)/dx  
-//     // df9_11/domegaBNb = TK (derivative w.r.t. angular velocity)
-//     Eigen::Matrix3d TKmat = TK(thetaBN);
-//     J.block<3,3>(9, 3) = TKmat;
-
-//     // df9_11/dthetaBN = d(TK)/dthetaBN * omegaBNb (derivative w.r.t. current orientation)
-//     // This also requires derivative of TK matrix - simplified for now
-
-//     return f;
-// }
-
-// Add these helper functions to your SystemSLAM.cpp file
+// Helper functions for autodiff
 
 // Helper function for autodiff: position dynamics dr/dt = Rnb(θ) * v
 template<typename Scalar>
@@ -191,8 +152,7 @@ Eigen::VectorXd SystemSLAM::dynamics(double t, const Eigen::VectorXd & x, const 
         // Extract the part we need: ∂(dθ/dt)/∂θ [rows 0-2, cols 9-11]
         J.block<3,3>(9, 9) = J_orient_full.block<3,3>(0, 9);
     }
-    std::cout << "Position cross-derivative norm: " << J.block<3,3>(6, 9).norm() << std::endl;
-    std::cout << "Orientation cross-derivative norm: " << J.block<3,3>(9, 9).norm() << std::endl;
+
     return f;
 }
 

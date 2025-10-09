@@ -63,7 +63,6 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
         cv::FileStorage fs(cameraPath.string(), cv::FileStorage::READ);
         fs["camera"] >> camera;
         fs.release();
-        std::cout << "Loaded camera calibration from: " << cameraPath.string() << std::endl;
     } else {
         std::cout << "Warning: Camera calibration not found at " << cameraPath.string() << std::endl;
         return;
@@ -102,17 +101,6 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
     cv::aruco::Dictionary dictionary = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_250);
     cv::aruco::ArucoDetector detector(dictionary);
 
-    // // Initialize SLAM system for ArUco scenario
-    // SystemSLAMPoseLandmarks * slamSystem = nullptr;
-    // if (scenario == 1) {  // ArUco scenario
-    //     // Initialize with minimal state (body velocities + pose)
-    //     Eigen::VectorXd initialMean = Eigen::VectorXd::Zero(12);  // [vBNb(3), omegaBNb(3), rBNn(3), Thetanb(3)]
-    //     Eigen::MatrixXd initialCovariance = 1 * Eigen::MatrixXd::Identity(12, 12);  // Small initial uncertainty
-    //     GaussianInfo<double> initialDensity = GaussianInfo<double>::fromSqrtMoment(initialMean, initialCovariance);
-    //     slamSystem = new SystemSLAMPoseLandmarks(initialDensity);
-    //     std::cout << "Initialized SLAM system for ArUco markers" << std::endl;
-    // }
-
     // Initialize SLAM system for ArUco scenario
     SystemSLAMPoseLandmarks* slamSystem = nullptr;
     if (scenario == 1) {  // ArUco scenario
@@ -123,12 +111,7 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
         initialMean.segment<3>(6) << 0.0, 0.0, -1.6;
 
         // Orientation: facing North, level (roll = 0, pitch = 0, yaw = 0) in radians
-        // initialMean.segment<3>(9) << -M_PI/2.0, M_PI, 0.0;
-        // initialMean.segment<3>(9) << M_PI/2, 0.0, M_PI/2;
         initialMean.segment<3>(9) << 0.0, 0.0, 0.0;
-
-        // // Initial covariance (tweak if you want looser priors on pose)
-        // Eigen::MatrixXd initialCovariance = Eigen::MatrixXd::Identity(12, 12);
 
         Eigen::MatrixXd initialCovariance = Eigen::MatrixXd::Identity(12, 12);
 
@@ -146,7 +129,6 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
             GaussianInfo<double>::fromSqrtMoment(initialMean, initialCovariance);
 
         slamSystem = new SystemSLAMPoseLandmarks(initialDensity);
-        std::cout << "Initialised SLAM (Aruco): r_B^n=[0,0,-1.6], Θ_nb=[0,0,0]" << std::endl;
     }
 
 
@@ -167,10 +149,6 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
         std::vector<int> ids;
         std::vector<std::vector<cv::Point2f>> corners;
         detector.detectMarkers(imgin, corners, ids);
-
-        // Debug: Always report detection status
-        std::cout << "Frame " << cap.get(cv::CAP_PROP_POS_FRAMES) 
-                 << ": ArUco detection found " << ids.size() << " markers" << std::endl;
 
         // Draw detected markers
         if (!ids.empty()) {
@@ -211,73 +189,8 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                 cv::Point textPos(center.x - textSize.width/2, center.y + textOffset);
                 cv::putText(imgProcessed, tagText, textPos, fontFace, fontScale, textColor, thickness);
             }
-                        
-        // // Draw pose axes for each detected tag using fixed pose estimation
-        // std::vector<cv::Vec3d> rvecs, tvecs;
-        // static std::map<int, Eigen::VectorXd> previousPoses; // Store previous poses for temporal consistency
-
-        // for (size_t i = 0; i < ids.size(); ++i) {
-        //     int tagId = ids[i];
-            
-        //     // Get previous pose for temporal consistency (if available)
-        //     Eigen::VectorXd* prevPose = nullptr;
-        //     auto it = previousPoses.find(tagId);
-        //     if (it != previousPoses.end()) {
-        //         prevPose = &(it->second);
-        //     }
-            
-        //     // Use your fixed pose estimation function
-        //     Eigen::VectorXd pose = MeasurementSLAMAruco::estimateArucoLandmarkPose(corners[i], camera, prevPose);
-            
-        //     if (pose.norm() > 0.0) {  // Valid pose estimated
-        //         // Store for next frame's temporal consistency
-        //         previousPoses[tagId] = pose;
-                
-        //         // Convert back to camera frame for visualization (OpenCV expects camera frame)
-        //         Eigen::Matrix3d R_bc;
-        //         R_bc << 0, 0, 1,   // Body X (North) = Camera Z (forward)
-        //                 1, 0, 0,   // Body Y (East) = Camera X (right)
-        //                 0, 1, 0;   // Body Z (Down) = Camera Y (down)
-                
-        //         // Transform from body frame back to camera frame
-        //         Eigen::Vector3d pos_body = pose.segment<3>(0);
-        //         Eigen::Vector3d rpy_body = pose.segment<3>(3);
-                
-        //         Eigen::Vector3d pos_camera = R_bc.transpose() * pos_body;
-        //         Eigen::Matrix3d R_body = rpy2rot(rpy_body);
-        //         Eigen::Matrix3d R_camera = R_bc.transpose() * R_body;
-                
-        //         // Convert rotation matrix to Rodrigues vector (what OpenCV expects)
-        //         cv::Mat R_cv;
-        //         cv::eigen2cv(R_camera, R_cv);
-        //         cv::Mat rvec_mat;
-        //         cv::Rodrigues(R_cv, rvec_mat);
-        //         cv::Vec3d rvec(rvec_mat.at<double>(0), rvec_mat.at<double>(1), rvec_mat.at<double>(2));
-                
-        //         cv::Vec3d tvec(pos_camera(0), pos_camera(1), pos_camera(2));
-                
-        //         // Draw stable axes
-        //         cv::drawFrameAxes(imgProcessed, camera.cameraMatrix, camera.distCoeffs, rvec, tvec, 0.1);
-        //     }
-        // }
-       // ═════════════════════════════════════════════════════════════════════════
-        // In visualNavigation.cpp - REPLACE the section that draws pose axes
-        // ═════════════════════════════════════════════════════════════════════════
-
-        // Find this section (around line 350-400) and REPLACE it:
-
-        // OLD CODE TO REMOVE:
-        // Draw pose axes for each detected tag using fixed pose estimation
-        // std::vector<cv::Vec3d> rvecs, tvecs;
-        // static std::map<int, Eigen::VectorXd> previousPoses;
-        // ... [delete the entire raw PnP axes drawing section]
-
-        // ═════════════════════════════════════════════════════════════════════════
-        // NEW CODE: Draw SLAM landmark axes (AFTER SLAM processing)
-        // ═════════════════════════════════════════════════════════════════════════
 
         if (slamSystem != nullptr && slamSystem->numberLandmarks() > 0) {
-            std::cout << "\n=== Drawing SLAM Landmark Axes ===" << std::endl;
             
             // Get current camera pose from SLAM state
             Eigen::VectorXd currentState = slamSystem->density.mean();
@@ -313,16 +226,13 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                 
                 // Check if landmark is in front of camera (positive Z)
                 if (r_L_c(2) <= 0.0) {
-                    std::cout << "  Landmark " << landmarkIdx << " is behind camera (z=" 
-                            << r_L_c(2) << "), skipping axes" << std::endl;
                     continue;
                 }
-                
+
                 // Check if landmark is within camera field of view
                 cv::Vec3d landmarkPosCV(r_L_n(0), r_L_n(1), r_L_n(2));
                 Pose<double> Tnb(R_nb, r_B_n);
                 if (!camera.isWorldWithinFOV(landmarkPosCV, Tnb)) {
-                    std::cout << "  Landmark " << landmarkIdx << " is outside FOV, skipping axes" << std::endl;
                     continue;
                 }
                 
@@ -362,41 +272,12 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                         int thickness = 2;
                         int baseline = 0;
                         cv::Size textSize = cv::getTextSize(labelText, fontFace, fontScale, thickness, &baseline);
-                        
-                        // // Position label above the landmark
-                        // cv::Point textPos(imagePoint[0].x - textSize.width/2, imagePoint[0].y - 15);
-                        
-                        // // Ensure text stays within image bounds
-                        // textPos.x = std::max(5, std::min(textPos.x, imgProcessed.cols - textSize.width - 5));
-                        // textPos.y = std::max(textSize.height + 5, std::min(textPos.y, imgProcessed.rows - 5));
-                        
-                        // // Draw background rectangle
-                        // cv::Point bgTopLeft(textPos.x - 3, textPos.y - textSize.height - 3);
-                        // cv::Point bgBottomRight(textPos.x + textSize.width + 3, textPos.y + baseline + 3);
-                        // cv::rectangle(imgProcessed, bgTopLeft, bgBottomRight, cv::Scalar(0, 0, 0), -1);
-                        
-                        // // Draw text
-                        // cv::putText(imgProcessed, labelText, textPos, fontFace, fontScale, 
-                        //         cv::Scalar(0, 255, 255), thickness);  // Cyan text
                     }
                 }
-                
-                std::cout << "  Drew axes for Landmark " << landmarkIdx 
-                        << " (Tag " << (landmarkIdx < landmarkTagIds.size() ? landmarkTagIds[landmarkIdx] : -1) 
-                        << ") at camera pos [" << r_L_c.transpose() << "]" << std::endl;
             }
-            
-            std::cout << "=== Finished drawing " << slamSystem->numberLandmarks() 
-                    << " landmark axes ===" << std::endl;
         }
 
-        // ═════════════════════════════════════════════════════════════════════════
-        // PLACEMENT NOTE: Put this code AFTER arucoMeasurement.process(*slamSystem)
-        // and BEFORE drawing confidence ellipses
-        // ═════════════════════════════════════════════════════════════════════════
-            
             // SLAM processing for ArUco scenario
-            std::cout << "Checking SLAM conditions: scenario=" << scenario << ", slamSystem=" << (slamSystem ? "valid" : "null") << std::endl;
             if (scenario == 1 && slamSystem != nullptr) {
                 // Create ArUco measurement
                 double timestamp = cap.get(cv::CAP_PROP_POS_MSEC) / 1000.0;  // Convert to seconds
@@ -430,73 +311,16 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                         visibleLandmarks.push_back(i);
                     }
                 }
-                
-                std::cout << "FOV check: " << visibleLandmarks.size() 
-                          << " landmarks visible out of " << slamSystem->numberLandmarks() << " total" << std::endl;
-                
+
                 // Perform data association
                 const std::vector<int> & associations = arucoMeasurement.associate(*slamSystem, visibleLandmarks);
 
-                // ADD THIS DEBUG:
-                std::cout << "\n🔴 ASSOCIATION BUG DEBUG:" << std::endl;
-                std::cout << "Detected tags: ";
-                for (int id : ids) std::cout << id << " ";
-                std::cout << std::endl;
-
-                std::cout << "Visible landmarks: ";
-                for (size_t idx : visibleLandmarks) std::cout << idx << " ";
-                std::cout << std::endl;
-
-                std::cout << "Association results: ";
-                for (int assoc : associations) std::cout << assoc << " ";
-                std::cout << std::endl;
-
-                const auto& storedTagIds = MeasurementSLAMAruco::getLandmarkTagIds();
-                std::cout << "Landmark->Tag mapping: ";
-                for (size_t i = 0; i < storedTagIds.size(); ++i) {
-                    std::cout << "L" << i << "->T" << storedTagIds[i] << " ";
-                }
-                std::cout << std::endl;
-                
                 // Process the measurement through SLAM (this will optimize the state and initialize new landmarks)
                 arucoMeasurement.process(*slamSystem);
-                
-                // Test corner predictions for existing landmarks
-                if (slamSystem->numberLandmarks() > 0) {
-                    Eigen::VectorXd currentState = slamSystem->density.mean();
-                    
-                    // Debug: Show camera pose
-                    std::cout << "Camera pose: pos[" 
-                              << currentState(6) << "," << currentState(7) << "," << currentState(8) 
-                              << "] rot[" 
-                              << currentState(9) << "," << currentState(10) << "," << currentState(11) 
-                              << "]" << std::endl;
-                    
-                    std::cout << "Testing corner predictions for " << slamSystem->numberLandmarks() << " landmarks:" << std::endl;
-                    
-                    for (std::size_t landmarkIdx = 0; landmarkIdx < slamSystem->numberLandmarks(); ++landmarkIdx) {
-                        Eigen::MatrixXd J;  // Jacobian (not used here)
-                        Eigen::Matrix<double, 8, 1> predictedCorners = arucoMeasurement.predictArucoCorners(currentState, J, *slamSystem, landmarkIdx);
-                        
-                        std::cout << "  Landmark " << landmarkIdx << " predicted corners: [";
-                        for (int c = 0; c < 4; ++c) {
-                            std::cout << "(" << predictedCorners(2*c) << "," << predictedCorners(2*c+1) << ")";
-                            if (c < 3) std::cout << " ";
-                        }
-                        std::cout << "]" << std::endl;
-                    }
-                }
-                
-                // Report detection results
-                std::cout << "Frame " << cap.get(cv::CAP_PROP_POS_FRAMES) 
-                         << ": Detected " << ids.size() << " ArUco markers, " 
-                         << slamSystem->numberLandmarks() << " landmarks tracked" << std::endl;
-                
+
                 // Draw confidence ellipses for landmarks in field of view (FOV)
                 // This includes both detected landmarks and potentially occluded ones
                 if (visibleLandmarks.size() > 0) {
-                    std::cout << "Drawing ellipses for " << visibleLandmarks.size() 
-                              << " landmarks in FOV (includes detected + potentially occluded)" << std::endl;
                     arucoMeasurement.drawConfidenceEllipses(imgProcessed, *slamSystem, visibleLandmarks, 3.0);
                 }
                 
@@ -514,36 +338,20 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
 
         // Get rendered frame from Plot system (includes 3D visualization)
         cv::Mat imgout = plot.getFrame();
-        if (!imgout.empty()) {
-            std::cout << "Plot frame size: " << imgout.cols << "x" << imgout.rows << std::endl;
-        } else {
-            std::cout << "Warning: Plot getFrame() returned empty image" << std::endl;
-        }
-        // Write output frame 
-        // if (doExport)
-        // {
-        //     // cv::Mat imgout /* = plot.getFrame()*/; // TODO: Uncomment this to get the frame image
-        //     // bufferedVideoWriter.write(imgout);
-        //     bufferedVideoWriter.write(imgProcessed);
-        // }
+
         // Use Plot system output if available, otherwise fallback to manual split-screen
         cv::Mat combinedFrame;
         if (!imgout.empty()) {
-            combinedFrame = imgout;  // Professional VTK-based split-screen
-            std::cout << "Using Plot system output: " << combinedFrame.cols << "x" << combinedFrame.rows << std::endl;
+            combinedFrame = imgout;
         } else {
             // Fallback to manual split-screen
-            cv::Mat leftFrame = imgProcessed;  // Video with ArUco markers
-            cv::Mat rightFrame = cv::Mat::zeros(leftFrame.size(), leftFrame.type());  // Blank right side
+            cv::Mat leftFrame = imgProcessed;
+            cv::Mat rightFrame = cv::Mat::zeros(leftFrame.size(), leftFrame.type());
             cv::hconcat(leftFrame, rightFrame, combinedFrame);
-            std::cout << "Using manual split-screen: " << combinedFrame.cols << "x" << combinedFrame.rows << std::endl;
         }
         
         // Handle interactive modes
         if (interactive == 2) {
-            // Interactive mode 2: Pause on every frame (VTK window key press)
-            std::cout << "Frame " << cap.get(cv::CAP_PROP_POS_FRAMES) << " - Press any key in VTK window to continue..." << std::endl;
-            
             // Wait for key press in VTK window
             plot.resetAdvanceFrame();
             while (!plot.shouldAdvanceFrame()) {
@@ -594,7 +402,6 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
     // Cleanup SLAM system
     if (slamSystem != nullptr) {
         delete slamSystem;
-        std::cout << "SLAM system cleanup complete" << std::endl;
     }
 
 }

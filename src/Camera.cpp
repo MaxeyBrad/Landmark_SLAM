@@ -369,18 +369,6 @@ void Camera::calcFieldOfView()
     dFOV = std::acos(topLeft.dot(bottomRight));
 }
 
-// cv::Vec3d Camera::worldToVector(const cv::Vec3d & rPNn, const Pose<double> & Tnb) const
-// {
-//     // Tnb = Tnc*Tcb
-//     return Tnc*Tbc.inverse();
-// }
-
-// Pose<double> Camera::bodyToCamera(const Pose<double> & Tnb) const
-// {
-//     // Tnc = Tnb*Tbc
-//     return Tnb*Tbc;
-// }
-
 cv::Vec3d Camera::worldToVector(const cv::Vec3d & rPNn, const Pose<double> & Tnb) const
 {
     // Camera pose Tnc (i.e., Rnc, rCNn)
@@ -478,13 +466,9 @@ void Camera::read(const cv::FileNode & node)
     // Pre-compute constants used in isVectorWithinFOV
     calcFieldOfView();
 
-    // // Initialize camera-body transformation (assignment requirement)
-    // // Body frame: b1=surge, b2=sway, b3=heave  
-    // // Camera frame: c1=x, c2=y, c3=z
-    // // Assignment mapping: b1->c3, b2->c1, b3->c2
     Eigen::Matrix3d Rbc;
     Rbc << 0, 0, 1,  // body_x (surge) -> camera_z
-           1, 0, 0,  // body_y (sway) -> camera_x  
+           1, 0, 0,  // body_y (sway) -> camera_x
            0, 1, 0;  // body_z (heave) -> camera_y
     Tbc = Pose<double>(Rbc, Eigen::Vector3d::Zero());
 
