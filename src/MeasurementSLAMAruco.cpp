@@ -35,7 +35,7 @@ MeasurementSLAMAruco::MeasurementSLAMAruco(double time,
     : MeasurementSLAM(time, camera)
     , tagIds_(tagIds)
     , corners_(corners)
-    , sigma_(2.0)  // 5 pixel measurement noise - more confident ArUco detection
+    , sigma_(8.0)  // 5 pixel measurement noise - more confident ArUco detection
 {
 
     // updateMethod_ = UpdateMethod::NEWTONTRUSTEIG;  // ✅ Use Newton's method
@@ -601,8 +601,8 @@ void MeasurementSLAMAruco::initializeNewLandmark(
     // epsilon controls uncertainty: smaller epsilon = larger covariance
     // For ArUco: epsilon = 0.1 to 0.2 gives reasonable initial uncertainty
     
-    double epsilon_position = 0.5;      // sqrt_info = 0.2 → sqrt_cov ≈ 5m
-    double epsilon_orientation = 0.5;   // sqrt_info = 0.5 → sqrt_cov ≈ 2 rad ≈ 115°
+    double epsilon_position = 5;      // sqrt_info = 0.2 → sqrt_cov ≈ 5m
+    double epsilon_orientation = 2;   // sqrt_info = 0.5 → sqrt_cov ≈ 2 rad ≈ 115°
     
     Eigen::MatrixXd sqrtInfo_plus = Eigen::MatrixXd::Zero(6, 6);
     sqrtInfo_plus.block<3,3>(0,0) = epsilon_position * Eigen::Matrix3d::Identity();
