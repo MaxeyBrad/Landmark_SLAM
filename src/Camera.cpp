@@ -216,8 +216,8 @@ ChessboardData::ChessboardData(const std::filesystem::path & configPath)
                             std::println(" done, found {} frames", nFrames);
 
                             // Select frames to process (every 30th frame, max 30 images)
-                            int frameInterval = 5;
-                            int maxImages = 50;
+                            int frameInterval = 1;
+                            int maxImages = 500;
                             int imagesFound = 0;
                             
 
